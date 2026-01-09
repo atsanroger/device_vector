@@ -1,2 +1,0 @@
-/usr/bin/ar qc libgpu_interface.a CMakeFiles/gpu_interface.dir/src/Device_Interface.F90.o
-/usr/bin/ranlib libgpu_interface.a

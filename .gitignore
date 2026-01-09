@@ -1,10 +1,15 @@
-*.out
-*.exe
+build/
 bin/
+profile/
 
-*.o
-*.obj
+*.mod
+*.mod.stamp
 
-.vscode/
-.idea/
-*~
+*.so
+*.a
+run_tests
+profile_kernel
+profile_resize
+
+CMakeCache.txt
+CMakeFiles/
