@@ -443,6 +443,7 @@ namespace GPU {
         //         std::fill(h_data_.begin() + (ptrdiff_t)logical_size_, h_data_.end(), static_cast<T>(0));
         //     }
         // }
+        
         void update_host() override {
             if (storage_size_ == 0) return;
 

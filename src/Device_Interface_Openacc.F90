@@ -86,6 +86,23 @@ MODULE Device_Vector
       TYPE(c_ptr)        :: vec_dev_i4_c
     END FUNCTION
     
+
+
+    SUBROUTINE vec_acc_map_i4_c(h) BIND(C, name="vec_acc_map_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    SUBROUTINE vec_acc_unmap_i4_c(h) BIND(C, name="vec_acc_unmap_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    FUNCTION vec_acc_is_mapped_i4_c(h) BIND(C, name="vec_acc_is_mapped_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_int)     :: vec_acc_is_mapped_i4_c
+    END FUNCTION
     FUNCTION vec_size_i4_c(h) BIND(C, name="vec_size_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
@@ -207,6 +224,23 @@ MODULE Device_Vector
       TYPE(c_ptr)        :: vec_dev_i8_c
     END FUNCTION
     
+
+
+    SUBROUTINE vec_acc_map_i8_c(h) BIND(C, name="vec_acc_map_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    SUBROUTINE vec_acc_unmap_i8_c(h) BIND(C, name="vec_acc_unmap_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    FUNCTION vec_acc_is_mapped_i8_c(h) BIND(C, name="vec_acc_is_mapped_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_int)     :: vec_acc_is_mapped_i8_c
+    END FUNCTION
     FUNCTION vec_size_i8_c(h) BIND(C, name="vec_size_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
@@ -316,6 +350,23 @@ MODULE Device_Vector
       TYPE(c_ptr)        :: vec_dev_r4_c
     END FUNCTION
     
+
+
+    SUBROUTINE vec_acc_map_r4_c(h) BIND(C, name="vec_acc_map_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    SUBROUTINE vec_acc_unmap_r4_c(h) BIND(C, name="vec_acc_unmap_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    FUNCTION vec_acc_is_mapped_r4_c(h) BIND(C, name="vec_acc_is_mapped_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_int)     :: vec_acc_is_mapped_r4_c
+    END FUNCTION
     FUNCTION vec_size_r4_c(h) BIND(C, name="vec_size_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
@@ -425,6 +476,23 @@ MODULE Device_Vector
       TYPE(c_ptr)        :: vec_dev_r8_c
     END FUNCTION
     
+
+
+    SUBROUTINE vec_acc_map_r8_c(h) BIND(C, name="vec_acc_map_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    SUBROUTINE vec_acc_unmap_r8_c(h) BIND(C, name="vec_acc_unmap_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+    FUNCTION vec_acc_is_mapped_r8_c(h) BIND(C, name="vec_acc_is_mapped_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_int)     :: vec_acc_is_mapped_r8_c
+    END FUNCTION
     FUNCTION vec_size_r8_c(h) BIND(C, name="vec_size_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
@@ -530,7 +598,11 @@ MODULE Device_Vector
     PROCEDURE :: fill_zero => impl_fill_zero_i4
     PROCEDURE :: get_handle => impl_get_handle_i4
     PROCEDURE :: get_device_ptr => impl_get_device_ptr_i4
-  END TYPE device_vector_i4_t
+  
+    PROCEDURE :: acc_map   => impl_acc_map_i4
+    PROCEDURE :: acc_unmap => impl_acc_unmap_i4
+    PROCEDURE :: acc_is_mapped => impl_acc_is_mapped_i4
+END TYPE device_vector_i4_t
 
   ! --- device_vector_i8_t ---
   TYPE :: device_vector_i8_t
@@ -545,7 +617,11 @@ MODULE Device_Vector
     PROCEDURE :: fill_zero => impl_fill_zero_i8
     PROCEDURE :: get_handle => impl_get_handle_i8
     PROCEDURE :: get_device_ptr => impl_get_device_ptr_i8
-  END TYPE device_vector_i8_t
+  
+    PROCEDURE :: acc_map   => impl_acc_map_i8
+    PROCEDURE :: acc_unmap => impl_acc_unmap_i8
+    PROCEDURE :: acc_is_mapped => impl_acc_is_mapped_i8
+END TYPE device_vector_i8_t
 
   ! --- device_vector_r4_t ---
   TYPE :: device_vector_r4_t
@@ -560,7 +636,11 @@ MODULE Device_Vector
     PROCEDURE :: fill_zero => impl_fill_zero_r4
     PROCEDURE :: get_handle => impl_get_handle_r4
     PROCEDURE :: get_device_ptr => impl_get_device_ptr_r4
-  END TYPE device_vector_r4_t
+  
+    PROCEDURE :: acc_map   => impl_acc_map_r4
+    PROCEDURE :: acc_unmap => impl_acc_unmap_r4
+    PROCEDURE :: acc_is_mapped => impl_acc_is_mapped_r4
+END TYPE device_vector_r4_t
 
   ! --- device_vector_r8_t ---
   TYPE :: device_vector_r8_t
@@ -575,7 +655,11 @@ MODULE Device_Vector
     PROCEDURE :: fill_zero => impl_fill_zero_r8
     PROCEDURE :: get_handle => impl_get_handle_r8
     PROCEDURE :: get_device_ptr => impl_get_device_ptr_r8
-  END TYPE device_vector_r8_t
+  
+    PROCEDURE :: acc_map   => impl_acc_map_r8
+    PROCEDURE :: acc_unmap => impl_acc_unmap_r8
+    PROCEDURE :: acc_is_mapped => impl_acc_is_mapped_r8
+END TYPE device_vector_r8_t
 
 
 CONTAINS

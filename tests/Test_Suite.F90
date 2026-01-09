@@ -9,7 +9,6 @@ PROGRAM Test_Suite
   PRINT *, "🚀 STARTING GPU FORTRAN TEST SUITE"
   PRINT *, "=========================================================="
 
-  ! 👇 [修正] 初始化環境 (Rank=0, GPUs_per_node=1)
   CALL device_env_init(0, 1)
 
   CALL test_lifecycle()
@@ -58,6 +57,7 @@ CONTAINS
     IF (vec%data(5) /= 5) CALL assert_fail("Old data lost after resize")
     vec%data(15) = 999
     CALL vec%upload()
+    CALL device_synchronize()
     vec%data(:) = 0
     CALL vec%download()
     IF (vec%data(15) /= 999) CALL assert_fail("Pointer not synced to new memory")
