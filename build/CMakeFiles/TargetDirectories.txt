@@ -1,0 +1,5 @@
+/home/wlchen/cuda_mem/device_vector/build/CMakeFiles/gpu_backend.dir
+/home/wlchen/cuda_mem/device_vector/build/CMakeFiles/gpu_interface.dir
+/home/wlchen/cuda_mem/device_vector/build/CMakeFiles/run_tests.dir
+/home/wlchen/cuda_mem/device_vector/build/CMakeFiles/edit_cache.dir
+/home/wlchen/cuda_mem/device_vector/build/CMakeFiles/rebuild_cache.dir

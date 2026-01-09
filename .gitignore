@@ -1,4 +1,10 @@
-*.o
 *.out
 *.exe
-build/
+bin/
+
+*.o
+*.obj
+
+.vscode/
+.idea/
+*~

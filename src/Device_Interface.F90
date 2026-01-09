@@ -3,7 +3,35 @@ MODULE Device_Vector
   IMPLICIT NONE
 
   ! ====================================================================
-  ! C Function Interfaces
+  ! 1. Whitelist Mode
+  ! ====================================================================
+  PRIVATE 
+
+  ! ====================================================================
+  ! 2. Public Interface
+  ! ====================================================================
+  
+  ! (1) Smart Classes
+  PUBLIC :: device_vector_i4_t
+  PUBLIC :: device_vector_i8_t
+  PUBLIC :: device_vector_r4_t
+  PUBLIC :: device_vector_r8_t
+
+  ! (2) Environment
+  PUBLIC :: device_env_init
+  PUBLIC :: device_env_finalize
+  PUBLIC :: device_synchronize
+
+  ! (3) Algorithms & Reductions
+  PUBLIC :: vec_sort_i4
+  
+  PUBLIC :: vec_sum_i4, vec_min_i4, vec_max_i4
+  PUBLIC :: vec_sum_i8, vec_min_i8, vec_max_i8
+  PUBLIC :: vec_sum_r4, vec_min_r4, vec_max_r4
+  PUBLIC :: vec_sum_r8, vec_min_r8, vec_max_r8
+
+  ! ====================================================================
+  ! 3. C Function Interfaces
   ! ====================================================================
   INTERFACE
 
@@ -486,7 +514,7 @@ MODULE Device_Vector
   END INTERFACE
 
   ! ====================================================================
-  ! 🔥 Smart Wrapper Classes (device_vector_xx_t)
+  ! Smart Wrapper Classes (device_vector_xx_t)
   ! ====================================================================
 
   ! --- device_vector_i4_t ---
@@ -816,8 +844,11 @@ CONTAINS
   END SUBROUTINE impl_fill_zero_i8
 
   ! ====================================================================
-  ! Original Procedural Wrappers (Keep for backwards compatibility)
+  ! Original Procedural Wrappers (Partially Hidden/Replaced by Class)
   ! ====================================================================
+  ! NOTE: These are kept PRIVATE because the Class replaces them, 
+  ! but the implementation logic is here if you ever need to expose them.
+  
   FUNCTION vec_create_i4(n, mode) RESULT(ptr)
     INTEGER(8), INTENT(IN) :: n
     INTEGER, INTENT(IN)    :: mode
@@ -1283,4 +1314,4 @@ CONTAINS
     ptr = this%handle
   END FUNCTION impl_get_handle_r8
 
-END MODULE Device_Interface
+END MODULE Device_Vector
