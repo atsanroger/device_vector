@@ -4,9 +4,6 @@
 > **Sources used here**: In the current sandbox, the files available for inspection are:
 > - `DeviceVector.cuh.safeB2.patched`
 > - `c_interface.cu.patched`
->
-> ⚠️ The other filenames you mentioned earlier (`DeviceEnv.*`, `DevicePtrManager.*`, `Device_Kernels.cuh`, `Device_Interface.F90`, `DeviceComm.*`) are **not present** in this sandbox folder, so Section 3 describes them only as **expected roles / inferred interfaces**. If you drop those files into the same folder, I can update this doc with exact API lists and code-level cross references.
-
 ---
 
 ## What this wrapper is trying to solve
