@@ -1,15 +1,18 @@
-build/
-bin/
-profile/
+/*
 
-*.mod
-*.mod.stamp
+!/tests/
+!/profile/
+!/src/
 
-*.so
-*.a
-run_tests
-profile_kernel
-profile_resize
-
-CMakeCache.txt
-CMakeFiles/
+!*.cu
+!*.cuh
+!*.cpp
+!*.h
+!*.F90
+!*.f90
+!*.sh
+!*.md
+!*.gitattributes
+!.gitignore
+!CMakeLists.txt
+!Makefile
