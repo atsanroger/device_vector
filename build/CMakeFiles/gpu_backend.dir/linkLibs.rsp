@@ -1,1 +1,0 @@
- "/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/cuda/12.5/targets/x86_64-linux/lib/libcudart.so" -lcudadevrt -lcudart_static -lrt -lpthread -ldl 

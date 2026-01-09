@@ -1,1 +1,0 @@
-/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/bin/nvcc -forward-unknown-to-host-compiler -O3 -DNDEBUG -arch=native -Xcompiler=-fPIC -Wno-deprecated-gpu-targets -shared -dlink --options-file CMakeFiles/gpu_backend.dir/deviceObjects1.rsp -o CMakeFiles/gpu_backend.dir/cmake_device_link.o --options-file CMakeFiles/gpu_backend.dir/deviceLinkLibs.rsp
