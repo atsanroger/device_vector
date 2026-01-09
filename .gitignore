@@ -12,6 +12,7 @@
 !*.f90
 !*.sh
 !*.md
+!*.MD
 !*.gitattributes
 !.gitignore
 !CMakeLists.txt
