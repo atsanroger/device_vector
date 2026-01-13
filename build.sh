@@ -36,7 +36,16 @@ CXX=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/bin/nvc++ \
 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DENABLE_OPENACC=ON
 
 echo "🔨 Compiling..."
-make -j$(nproc)
+TARGETS=""
+if [[ "$EXEC_MODE" == "1" ]]; then
+    TARGETS="run_tests"
+elif [[ "$EXEC_MODE" == "2" ]]; then
+    TARGETS="profile_kernel profile_resize" 
+else
+    TARGETS="all"
+fi
+
+make -j$(nproc) $TARGETS
 
 echo "✅ Build Successful!"
 echo "=========================================="
