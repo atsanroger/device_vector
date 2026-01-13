@@ -52,19 +52,25 @@ PROGRAM profile_particles_soa
   END TYPE particle_soa_t
   TYPE(particle_soa_t) :: ptcl
   
+  ! 用於初始化的臨時 Buffer (因為 Compute Vector 不能直接寫入)
+  ! 我們需要不同型別的 Buffer 來對應不同欄位
+  TYPE(device_vector_i8_t) :: init_buf_i8
+  TYPE(device_vector_i4_t) :: init_buf_i4
+  TYPE(device_vector_r4_t) :: init_buf_r4
+  
   INTEGER(8) :: cap_dv  ! 新增 DeviceVector 的容量追蹤
 
   ! 計時與輔助
   INTEGER(8) :: c_start, c_end, c_rate
   REAL(8)    :: t_acc, t_cf, t_dv
-  INTEGER    :: i, MODE
+  INTEGER    :: i
   INTEGER(8) :: current_n
   INTEGER(8) :: new_cap
 
   CALL device_env_init(0, 1)
 
   PRINT *, "=========================================================="
-  PRINT *, "   FINAL SHOWDOWN: CAPACITY-BASED RESIZE (FIXED SYNTAX)   "
+  PRINT *, "   FINAL SHOWDOWN: CAPACITY-BASED RESIZE (SEMANTIC API)   "
   PRINT *, "   Growth: ", N_START, " -> ", N_END
   PRINT *, "=========================================================="
 
@@ -75,7 +81,16 @@ PROGRAM profile_particles_soa
   cap_acc = N_START
   ALLOCATE(h_id(cap_acc), h_ijk(cap_acc*3), h_xyz(cap_acc*3))
   ALLOCATE(h_prop(cap_acc*N_PROP), h_seed(cap_acc), h_alive(cap_acc))
-  !$acc enter data create(h_id, h_ijk, h_xyz, h_prop, h_seed, h_alive)
+  
+  ! 初始化資料 (公平起見)
+  h_id = 1
+  h_ijk = 0
+  h_xyz = 0.0
+  h_prop = 0.0
+  h_seed = 0
+  h_alive = 1
+  
+  !$acc enter data copyin(h_id, h_ijk, h_xyz, h_prop, h_seed, h_alive)
   
   CALL device_synchronize()
   CALL SYSTEM_CLOCK(COUNT=c_start, COUNT_RATE=c_rate)
@@ -88,53 +103,33 @@ PROGRAM profile_particles_soa
         new_cap = cap_acc + cap_acc / 2
         if (new_cap < current_n) new_cap = current_n * 1.5
         
-        ! [修正] 絕對不能把 Fortran 代碼寫在 !$acc 行後面
-        
-        ! ID Resize
-        ALLOCATE(h_id_tmp(new_cap))
-        h_id_tmp(1:cap_acc) = h_id(1:cap_acc)
-        !$acc exit data delete(h_id)
-        DEALLOCATE(h_id)
+        ALLOCATE(h_id_tmp(new_cap)); h_id_tmp(1:cap_acc) = h_id(1:cap_acc)
+        !$acc exit data delete(h_id); DEALLOCATE(h_id)
         CALL MOVE_ALLOC(h_id_tmp, h_id)
         !$acc enter data copyin(h_id)
         
-        ! IJK Resize
-        ALLOCATE(h_ijk_tmp(new_cap*3))
-        h_ijk_tmp(1:cap_acc*3) = h_ijk(1:cap_acc*3)
-        !$acc exit data delete(h_ijk)
-        DEALLOCATE(h_ijk)
+        ALLOCATE(h_ijk_tmp(new_cap*3)); h_ijk_tmp(1:cap_acc*3) = h_ijk(1:cap_acc*3)
+        !$acc exit data delete(h_ijk); DEALLOCATE(h_ijk)
         CALL MOVE_ALLOC(h_ijk_tmp, h_ijk)
         !$acc enter data copyin(h_ijk)
 
-        ! XYZ Resize
-        ALLOCATE(h_xyz_tmp(new_cap*3))
-        h_xyz_tmp(1:cap_acc*3) = h_xyz(1:cap_acc*3)
-        !$acc exit data delete(h_xyz)
-        DEALLOCATE(h_xyz)
+        ALLOCATE(h_xyz_tmp(new_cap*3)); h_xyz_tmp(1:cap_acc*3) = h_xyz(1:cap_acc*3)
+        !$acc exit data delete(h_xyz); DEALLOCATE(h_xyz)
         CALL MOVE_ALLOC(h_xyz_tmp, h_xyz)
         !$acc enter data copyin(h_xyz)
 
-        ! PROP Resize
-        ALLOCATE(h_prop_tmp(new_cap*N_PROP))
-        h_prop_tmp(1:cap_acc*N_PROP) = h_prop(1:cap_acc*N_PROP)
-        !$acc exit data delete(h_prop)
-        DEALLOCATE(h_prop)
+        ALLOCATE(h_prop_tmp(new_cap*N_PROP)); h_prop_tmp(1:cap_acc*N_PROP) = h_prop(1:cap_acc*N_PROP)
+        !$acc exit data delete(h_prop); DEALLOCATE(h_prop)
         CALL MOVE_ALLOC(h_prop_tmp, h_prop)
         !$acc enter data copyin(h_prop)
 
-        ! SEED Resize
-        ALLOCATE(h_seed_tmp(new_cap))
-        h_seed_tmp(1:cap_acc) = h_seed(1:cap_acc)
-        !$acc exit data delete(h_seed)
-        DEALLOCATE(h_seed)
+        ALLOCATE(h_seed_tmp(new_cap)); h_seed_tmp(1:cap_acc) = h_seed(1:cap_acc)
+        !$acc exit data delete(h_seed); DEALLOCATE(h_seed)
         CALL MOVE_ALLOC(h_seed_tmp, h_seed)
         !$acc enter data copyin(h_seed)
 
-        ! ALIVE Resize
-        ALLOCATE(h_alive_tmp(new_cap))
-        h_alive_tmp(1:cap_acc) = h_alive(1:cap_acc)
-        !$acc exit data delete(h_alive)
-        DEALLOCATE(h_alive)
+        ALLOCATE(h_alive_tmp(new_cap)); h_alive_tmp(1:cap_acc) = h_alive(1:cap_acc)
+        !$acc exit data delete(h_alive); DEALLOCATE(h_alive)
         CALL MOVE_ALLOC(h_alive_tmp, h_alive)
         !$acc enter data copyin(h_alive)
 
@@ -157,6 +152,14 @@ PROGRAM profile_particles_soa
   cap_cf = N_START
   ALLOCATE(d_id(cap_cf), d_ijk(cap_cf*3), d_xyz(cap_cf*3))
   ALLOCATE(d_prop(cap_cf*N_PROP), d_seed(cap_cf), d_alive(cap_cf))
+  
+  ! 初始化 (Device Kernel or Assignment)
+  d_id = 1
+  d_ijk = 0
+  d_xyz = 0.0
+  d_prop = 0.0
+  d_seed = 0
+  d_alive = 1
   
   CALL device_synchronize()
   CALL SYSTEM_CLOCK(COUNT=c_start)
@@ -198,18 +201,57 @@ PROGRAM profile_particles_soa
 
 
   ! ==================================================================
-  ! [3] DeviceVector (Smart Capacity Strategy)
+  ! [3] DeviceVector (Mode 2: Compute Vector)
   ! ==================================================================
-  PRINT *, "Running [3] DeviceVector (Capacity Strategy)..."
-  MODE = 2
+  PRINT *, "Running [3] DeviceVector (Compute Mode)..."
   cap_dv = N_START
   
-  CALL ptcl%id%create(cap_dv, MODE)
-  CALL ptcl%ijk%create(cap_dv * 3, MODE)
-  CALL ptcl%xyz%create(cap_dv * 3, MODE)
-  CALL ptcl%prop%create(cap_dv * N_PROP, MODE)
-  CALL ptcl%seed%create(cap_dv, MODE)
-  CALL ptcl%alive%create(cap_dv, MODE)
+  ! 1. 建立計算用 Vector (Pure Device)
+  CALL ptcl%id%create_vector(cap_dv)
+  CALL ptcl%ijk%create_vector(cap_dv * 3)
+  CALL ptcl%xyz%create_vector(cap_dv * 3)
+  CALL ptcl%prop%create_vector(cap_dv * N_PROP)
+  CALL ptcl%seed%create_vector(cap_dv)
+  CALL ptcl%alive%create_vector(cap_dv)
+  
+  ! 2. 初始化資料 (這也是標準流程：用 Buffer 傳輸，copy_from 給 Vector)
+  ! (A) ID (Integer 8)
+  CALL init_buf_i8%create_buffer(cap_dv)
+  init_buf_i8%ptr(:) = 1_8
+  CALL init_buf_i8%upload()
+  CALL ptcl%id%copy_from(init_buf_i8)
+  CALL init_buf_i8%free()
+
+  ! (B) IJK, Seed, Alive (Integer 4)
+  CALL init_buf_i4%create_buffer(cap_dv * 3) ! 共用大小，反正只是初始化
+  init_buf_i4%ptr(:) = 0
+  CALL init_buf_i4%upload()
+  CALL ptcl%ijk%copy_from(init_buf_i4)
+  
+  ! Reuse buf for seed
+  CALL init_buf_i4%resize(cap_dv)
+  init_buf_i4%ptr(:) = 0
+  CALL init_buf_i4%upload()
+  CALL ptcl%seed%copy_from(init_buf_i4)
+  
+  ! Reuse buf for alive
+  init_buf_i4%ptr(:) = 1
+  CALL init_buf_i4%upload()
+  CALL ptcl%alive%copy_from(init_buf_i4)
+  CALL init_buf_i4%free()
+
+  ! (C) XYZ, Prop (Real 4)
+  CALL init_buf_r4%create_buffer(cap_dv * 3)
+  init_buf_r4%ptr(:) = 0.0
+  CALL init_buf_r4%upload()
+  CALL ptcl%xyz%copy_from(init_buf_r4)
+  
+  CALL init_buf_r4%resize(cap_dv * N_PROP)
+  init_buf_r4%ptr(:) = 0.0
+  CALL init_buf_r4%upload()
+  CALL ptcl%prop%copy_from(init_buf_r4)
+  CALL init_buf_r4%free()
+  
   
   CALL device_synchronize()
   CALL SYSTEM_CLOCK(COUNT=c_start)
@@ -222,6 +264,7 @@ PROGRAM profile_particles_soa
         new_cap = cap_dv + cap_dv / 2
         if (new_cap < current_n) new_cap = current_n * 1.5
         
+        ! 這裡呼叫 resize，底層是純 GPU 操作 (Async + Capacity)
         CALL ptcl%id%resize(new_cap)
         CALL ptcl%ijk%resize(new_cap * 3)
         CALL ptcl%xyz%resize(new_cap * 3)

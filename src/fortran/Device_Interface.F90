@@ -3,35 +3,26 @@ MODULE Device_Vector
   IMPLICIT NONE
 
   ! ====================================================================
-  ! 1. Whitelist Mode
+  ! 1. Visibility
   ! ====================================================================
   PRIVATE 
-
-  ! ====================================================================
-  ! 2. Public Interface
-  ! ====================================================================
   
-  ! (1) Smart Classes
+  ! Public Types
   PUBLIC :: device_vector_i4_t
   PUBLIC :: device_vector_i8_t
   PUBLIC :: device_vector_r4_t
   PUBLIC :: device_vector_r8_t
-
-  ! (2) Environment
+  
+  ! Public Env Functions
   PUBLIC :: device_env_init
   PUBLIC :: device_env_finalize
   PUBLIC :: device_synchronize
-
-  ! (3) Algorithms & Reductions
-  PUBLIC :: vec_sort_i4
   
-  PUBLIC :: vec_sum_i4, vec_min_i4, vec_max_i4
-  PUBLIC :: vec_sum_i8, vec_min_i8, vec_max_i8
-  PUBLIC :: vec_sum_r4, vec_min_r4, vec_max_r4
-  PUBLIC :: vec_sum_r8, vec_min_r8, vec_max_r8
+  ! Public Algo
+  PUBLIC :: vec_sort_i4
 
   ! ====================================================================
-  ! 3. C Function Interfaces
+  ! 2. C Function Interfaces
   ! ====================================================================
   INTERFACE
 
@@ -47,14 +38,20 @@ MODULE Device_Vector
     SUBROUTINE device_synchronize() BIND(C, name="device_synchronize")
     END SUBROUTINE
 
-    ! ------------------------------------------------------------------
-    ! [i4] Integer (32-bit)
-    ! ------------------------------------------------------------------
-    FUNCTION vec_create_i4_c(n, mode) BIND(C, name="vec_create_i4")
+    ! ==================================================================
+    ! [I4] Integer (32-bit)
+    ! ==================================================================
+    FUNCTION vec_new_vector_i4_c(n) RESULT(res) BIND(C, name="vec_new_vector_i4")
       IMPORT
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int), VALUE    :: mode
-      TYPE(c_ptr)              :: vec_create_i4_c
+      TYPE(C_PTR) :: res
+    END FUNCTION
+    
+    FUNCTION vec_new_buffer_i4_c(n, pinned) RESULT(res) BIND(C, name="vec_new_buffer_i4")
+      IMPORT
+      INTEGER(c_size_t), VALUE :: n
+      LOGICAL(c_bool), VALUE :: pinned
+      TYPE(C_PTR) :: res
     END FUNCTION
 
     SUBROUTINE vec_delete_i4_c(h) BIND(C, name="vec_delete_i4")
@@ -74,22 +71,33 @@ MODULE Device_Vector
       INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
 
-    FUNCTION vec_host_i4_c(h) BIND(C, name="vec_host_i4")
+    SUBROUTINE vec_copy_from_i4_c(dst, src) BIND(C, name="vec_copy_from_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: dst, src
+    END SUBROUTINE
+
+    FUNCTION vec_host_i4_c(h) RESULT(res) BIND(C, name="vec_host_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_host_i4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    FUNCTION vec_dev_i4_c(h) BIND(C, name="vec_dev_i4")
+    FUNCTION vec_dev_i4_c(h) RESULT(res) BIND(C, name="vec_dev_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_dev_i4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
     
-    FUNCTION vec_size_i4_c(h) BIND(C, name="vec_size_i4")
+    FUNCTION vec_size_i4_c(h) RESULT(res) BIND(C, name="vec_size_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_size_t)  :: vec_size_i4_c
+      INTEGER(c_size_t)  :: res
+    END FUNCTION
+    
+    FUNCTION vec_capacity_i4_c(h) RESULT(res) BIND(C, name="vec_capacity_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t)  :: res
     END FUNCTION
 
     SUBROUTINE vec_upload_i4_c(h) BIND(C, name="vec_upload_i4")
@@ -102,16 +110,16 @@ MODULE Device_Vector
       TYPE(c_ptr), VALUE :: h
     END SUBROUTINE
 
-    SUBROUTINE vec_upload_part_i4_c(h, offset, count) BIND(C, name="vec_upload_part_i4")
+    SUBROUTINE vec_upload_part_i4_c(h, off, cnt) BIND(C, name="vec_upload_part_i4")
       IMPORT
       TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: offset, count
+      INTEGER(c_size_t), VALUE :: off, cnt
     END SUBROUTINE
 
-    SUBROUTINE vec_download_part_i4_c(h, offset, count) BIND(C, name="vec_download_part_i4")
+    SUBROUTINE vec_download_part_i4_c(h, off, cnt) BIND(C, name="vec_download_part_i4")
       IMPORT
       TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: offset, count
+      INTEGER(c_size_t), VALUE :: off, cnt
     END SUBROUTINE
 
     SUBROUTINE vec_fill_zero_i4_c(h) BIND(C, name="vec_fill_zero_i4")
@@ -130,87 +138,110 @@ MODULE Device_Vector
       TYPE(c_ptr), VALUE :: src, map, dst
     END SUBROUTINE
 
-    FUNCTION vec_clone_i4_c(h) BIND(C, name="vec_clone_i4")
+    FUNCTION vec_clone_i4_c(h) RESULT(res) BIND(C, name="vec_clone_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_clone_i4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    ! --- Reductions (Full) ---
-    FUNCTION vec_sum_i4_c(h) BIND(C, name="vec_sum_i4")
+    FUNCTION vec_sum_i4_c(h) RESULT(res) BIND(C, name="vec_sum_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_int)     :: vec_sum_i4_c
+      INTEGER(c_int)     :: res
     END FUNCTION
-    FUNCTION vec_min_i4_c(h) BIND(C, name="vec_min_i4")
+    
+    FUNCTION vec_sum_partial_i4_c(h, n) RESULT(res) BIND(C, name="vec_sum_partial_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_int)     :: vec_min_i4_c
+      INTEGER(c_size_t), VALUE :: n
+      INTEGER(c_int)     :: res
     END FUNCTION
-    FUNCTION vec_max_i4_c(h) BIND(C, name="vec_max_i4")
+    
+    FUNCTION vec_min_i4_c(h) RESULT(res) BIND(C, name="vec_min_i4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_int)     :: vec_max_i4_c
+      INTEGER(c_int)     :: res
+    END FUNCTION
+    FUNCTION vec_min_partial_i4_c(h, n) RESULT(res) BIND(C, name="vec_min_partial_i4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t), VALUE :: n
+      INTEGER(c_int)     :: res
     END FUNCTION
 
-    ! --- Reductions (Partial) ---
-    FUNCTION vec_sum_partial_i4_c(h, n) BIND(C, name="vec_sum_partial_i4")
+    FUNCTION vec_max_i4_c(h) RESULT(res) BIND(C, name="vec_max_i4")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int)           :: vec_sum_partial_i4_c
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_int)     :: res
     END FUNCTION
-    FUNCTION vec_min_partial_i4_c(h, n) BIND(C, name="vec_min_partial_i4")
+    FUNCTION vec_max_partial_i4_c(h, n) RESULT(res) BIND(C, name="vec_max_partial_i4")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
+      TYPE(c_ptr), VALUE :: h
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int)           :: vec_min_partial_i4_c
-    END FUNCTION
-    FUNCTION vec_max_partial_i4_c(h, n) BIND(C, name="vec_max_partial_i4")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int)           :: vec_max_partial_i4_c
+      INTEGER(c_int)     :: res
     END FUNCTION
 
 
-    ! ------------------------------------------------------------------
-    ! [i8] Integer (64-bit)
-    ! ------------------------------------------------------------------
-    FUNCTION vec_create_i8_c(n, mode) BIND(C, name="vec_create_i8")
+    ! ==================================================================
+    ! [I8] Integer (64-bit)
+    ! ==================================================================
+    FUNCTION vec_new_vector_i8_c(n) RESULT(res) BIND(C, name="vec_new_vector_i8")
       IMPORT
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int), VALUE    :: mode
-      TYPE(c_ptr)              :: vec_create_i8_c
+      TYPE(C_PTR) :: res
+    END FUNCTION
+    
+    FUNCTION vec_new_buffer_i8_c(n, pinned) RESULT(res) BIND(C, name="vec_new_buffer_i8")
+      IMPORT
+      INTEGER(c_size_t), VALUE :: n
+      LOGICAL(c_bool), VALUE :: pinned
+      TYPE(C_PTR) :: res
     END FUNCTION
 
     SUBROUTINE vec_delete_i8_c(h) BIND(C, name="vec_delete_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
     END SUBROUTINE
-    
+
     SUBROUTINE vec_resize_i8_c(h, n) BIND(C, name="vec_resize_i8")
       IMPORT
       TYPE(c_ptr), VALUE       :: h
       INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
 
-    FUNCTION vec_host_i8_c(h) BIND(C, name="vec_host_i8")
+    SUBROUTINE vec_reserve_i8_c(h, n) BIND(C, name="vec_reserve_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE       :: h
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_copy_from_i8_c(dst, src) BIND(C, name="vec_copy_from_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: dst, src
+    END SUBROUTINE
+
+    FUNCTION vec_host_i8_c(h) RESULT(res) BIND(C, name="vec_host_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_host_i8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    FUNCTION vec_dev_i8_c(h) BIND(C, name="vec_dev_i8")
+    FUNCTION vec_dev_i8_c(h) RESULT(res) BIND(C, name="vec_dev_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_dev_i8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
     
-    FUNCTION vec_size_i8_c(h) BIND(C, name="vec_size_i8")
+    FUNCTION vec_size_i8_c(h) RESULT(res) BIND(C, name="vec_size_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_size_t)  :: vec_size_i8_c
+      INTEGER(c_size_t)  :: res
+    END FUNCTION
+    
+    FUNCTION vec_capacity_i8_c(h) RESULT(res) BIND(C, name="vec_capacity_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t)  :: res
     END FUNCTION
 
     SUBROUTINE vec_upload_i8_c(h) BIND(C, name="vec_upload_i8")
@@ -239,58 +270,64 @@ MODULE Device_Vector
       TYPE(c_ptr), VALUE :: src, map, dst
     END SUBROUTINE
 
-    FUNCTION vec_clone_i8_c(h) BIND(C, name="vec_clone_i8")
+    FUNCTION vec_clone_i8_c(h) RESULT(res) BIND(C, name="vec_clone_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_clone_i8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    ! --- Reductions (Full) ---
-    FUNCTION vec_sum_i8_c(h) BIND(C, name="vec_sum_i8")
+    FUNCTION vec_sum_i8_c(h) RESULT(res) BIND(C, name="vec_sum_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_long_long) :: vec_sum_i8_c
+      INTEGER(c_long_long) :: res
     END FUNCTION
-    FUNCTION vec_min_i8_c(h) BIND(C, name="vec_min_i8")
+    
+    FUNCTION vec_sum_partial_i8_c(h, n) RESULT(res) BIND(C, name="vec_sum_partial_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_long_long) :: vec_min_i8_c
+      INTEGER(c_size_t), VALUE :: n
+      INTEGER(c_long_long) :: res
     END FUNCTION
-    FUNCTION vec_max_i8_c(h) BIND(C, name="vec_max_i8")
+
+    FUNCTION vec_min_i8_c(h) RESULT(res) BIND(C, name="vec_min_i8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_long_long) :: vec_max_i8_c
+      INTEGER(c_long_long) :: res
+    END FUNCTION
+    FUNCTION vec_min_partial_i8_c(h, n) RESULT(res) BIND(C, name="vec_min_partial_i8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t), VALUE :: n
+      INTEGER(c_long_long) :: res
     END FUNCTION
 
-    ! --- Reductions (Partial) ---
-    FUNCTION vec_sum_partial_i8_c(h, n) BIND(C, name="vec_sum_partial_i8")
+    FUNCTION vec_max_i8_c(h) RESULT(res) BIND(C, name="vec_max_i8")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_long_long)     :: vec_sum_partial_i8_c
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_long_long) :: res
     END FUNCTION
-    FUNCTION vec_min_partial_i8_c(h, n) BIND(C, name="vec_min_partial_i8")
+    FUNCTION vec_max_partial_i8_c(h, n) RESULT(res) BIND(C, name="vec_max_partial_i8")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
+      TYPE(c_ptr), VALUE :: h
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_long_long)     :: vec_min_partial_i8_c
-    END FUNCTION
-    FUNCTION vec_max_partial_i8_c(h, n) BIND(C, name="vec_max_partial_i8")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_long_long)     :: vec_max_partial_i8_c
+      INTEGER(c_long_long) :: res
     END FUNCTION
 
 
-    ! ------------------------------------------------------------------
-    ! [r4] Real (32-bit Float)
-    ! ------------------------------------------------------------------
-    FUNCTION vec_create_r4_c(n, mode) BIND(C, name="vec_create_r4")
+    ! ==================================================================
+    ! [R4] Real (32-bit)
+    ! ==================================================================
+    FUNCTION vec_new_vector_r4_c(n) RESULT(res) BIND(C, name="vec_new_vector_r4")
       IMPORT
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int), VALUE    :: mode
-      TYPE(c_ptr)              :: vec_create_r4_c
+      TYPE(C_PTR) :: res
+    END FUNCTION
+    
+    FUNCTION vec_new_buffer_r4_c(n, pinned) RESULT(res) BIND(C, name="vec_new_buffer_r4")
+      IMPORT
+      INTEGER(c_size_t), VALUE :: n
+      LOGICAL(c_bool), VALUE :: pinned
+      TYPE(C_PTR) :: res
     END FUNCTION
 
     SUBROUTINE vec_delete_r4_c(h) BIND(C, name="vec_delete_r4")
@@ -304,22 +341,39 @@ MODULE Device_Vector
       INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
 
-    FUNCTION vec_host_r4_c(h) BIND(C, name="vec_host_r4")
+    SUBROUTINE vec_reserve_r4_c(h, n) BIND(C, name="vec_reserve_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE       :: h
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_copy_from_r4_c(dst, src) BIND(C, name="vec_copy_from_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: dst, src
+    END SUBROUTINE
+
+    FUNCTION vec_host_r4_c(h) RESULT(res) BIND(C, name="vec_host_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_host_r4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    FUNCTION vec_dev_r4_c(h) BIND(C, name="vec_dev_r4")
+    FUNCTION vec_dev_r4_c(h) RESULT(res) BIND(C, name="vec_dev_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_dev_r4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
     
-    FUNCTION vec_size_r4_c(h) BIND(C, name="vec_size_r4")
+    FUNCTION vec_size_r4_c(h) RESULT(res) BIND(C, name="vec_size_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_size_t)  :: vec_size_r4_c
+      INTEGER(c_size_t)  :: res
+    END FUNCTION
+    
+    FUNCTION vec_capacity_r4_c(h) RESULT(res) BIND(C, name="vec_capacity_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t)  :: res
     END FUNCTION
 
     SUBROUTINE vec_upload_r4_c(h) BIND(C, name="vec_upload_r4")
@@ -348,87 +402,110 @@ MODULE Device_Vector
       TYPE(c_ptr), VALUE :: src, map, dst
     END SUBROUTINE
 
-    FUNCTION vec_clone_r4_c(h) BIND(C, name="vec_clone_r4")
+    FUNCTION vec_clone_r4_c(h) RESULT(res) BIND(C, name="vec_clone_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_clone_r4_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    ! --- Reductions (Full) ---
-    FUNCTION vec_sum_r4_c(h) BIND(C, name="vec_sum_r4")
+    FUNCTION vec_sum_r4_c(h) RESULT(res) BIND(C, name="vec_sum_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      REAL(c_float)      :: vec_sum_r4_c
+      REAL(c_float)      :: res
     END FUNCTION
-    FUNCTION vec_min_r4_c(h) BIND(C, name="vec_min_r4")
+    
+    FUNCTION vec_sum_partial_r4_c(h, n) RESULT(res) BIND(C, name="vec_sum_partial_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      REAL(c_float)      :: vec_min_r4_c
+      INTEGER(c_size_t), VALUE :: n
+      REAL(c_float)      :: res
     END FUNCTION
-    FUNCTION vec_max_r4_c(h) BIND(C, name="vec_max_r4")
+
+    FUNCTION vec_min_r4_c(h) RESULT(res) BIND(C, name="vec_min_r4")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      REAL(c_float)      :: vec_max_r4_c
+      REAL(c_float)      :: res
+    END FUNCTION
+    FUNCTION vec_min_partial_r4_c(h, n) RESULT(res) BIND(C, name="vec_min_partial_r4")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t), VALUE :: n
+      REAL(c_float)      :: res
     END FUNCTION
 
-    ! --- Reductions (Partial) ---
-    FUNCTION vec_sum_partial_r4_c(h, n) BIND(C, name="vec_sum_partial_r4")
+    FUNCTION vec_max_r4_c(h) RESULT(res) BIND(C, name="vec_max_r4")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      REAL(c_float)            :: vec_sum_partial_r4_c
+      TYPE(c_ptr), VALUE :: h
+      REAL(c_float)      :: res
     END FUNCTION
-    FUNCTION vec_min_partial_r4_c(h, n) BIND(C, name="vec_min_partial_r4")
+    FUNCTION vec_max_partial_r4_c(h, n) RESULT(res) BIND(C, name="vec_max_partial_r4")
       IMPORT
-      TYPE(c_ptr), VALUE       :: h
+      TYPE(c_ptr), VALUE :: h
       INTEGER(c_size_t), VALUE :: n
-      REAL(c_float)            :: vec_min_partial_r4_c
-    END FUNCTION
-    FUNCTION vec_max_partial_r4_c(h, n) BIND(C, name="vec_max_partial_r4")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      REAL(c_float)            :: vec_max_partial_r4_c
+      REAL(c_float)      :: res
     END FUNCTION
 
 
-    ! ------------------------------------------------------------------
-    ! [r8] Real (64-bit Double)
-    ! ------------------------------------------------------------------
-    FUNCTION vec_create_r8_c(n, mode) BIND(C, name="vec_create_r8")
+    ! ==================================================================
+    ! [R8] Real (64-bit)
+    ! ==================================================================
+    FUNCTION vec_new_vector_r8_c(n) RESULT(res) BIND(C, name="vec_new_vector_r8")
       IMPORT
       INTEGER(c_size_t), VALUE :: n
-      INTEGER(c_int), VALUE    :: mode
-      TYPE(c_ptr)              :: vec_create_r8_c
+      TYPE(C_PTR) :: res
+    END FUNCTION
+    
+    FUNCTION vec_new_buffer_r8_c(n, pinned) RESULT(res) BIND(C, name="vec_new_buffer_r8")
+      IMPORT
+      INTEGER(c_size_t), VALUE :: n
+      LOGICAL(c_bool), VALUE :: pinned
+      TYPE(C_PTR) :: res
     END FUNCTION
 
     SUBROUTINE vec_delete_r8_c(h) BIND(C, name="vec_delete_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
     END SUBROUTINE
-    
+
     SUBROUTINE vec_resize_r8_c(h, n) BIND(C, name="vec_resize_r8")
       IMPORT
       TYPE(c_ptr), VALUE       :: h
       INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
 
-    FUNCTION vec_host_r8_c(h) BIND(C, name="vec_host_r8")
+    SUBROUTINE vec_reserve_r8_c(h, n) BIND(C, name="vec_reserve_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE       :: h
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_copy_from_r8_c(dst, src) BIND(C, name="vec_copy_from_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: dst, src
+    END SUBROUTINE
+
+    FUNCTION vec_host_r8_c(h) RESULT(res) BIND(C, name="vec_host_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_host_r8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    FUNCTION vec_dev_r8_c(h) BIND(C, name="vec_dev_r8")
+    FUNCTION vec_dev_r8_c(h) RESULT(res) BIND(C, name="vec_dev_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_dev_r8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
     
-    FUNCTION vec_size_r8_c(h) BIND(C, name="vec_size_r8")
+    FUNCTION vec_size_r8_c(h) RESULT(res) BIND(C, name="vec_size_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      INTEGER(c_size_t)  :: vec_size_r8_c
+      INTEGER(c_size_t)  :: res
+    END FUNCTION
+    
+    FUNCTION vec_capacity_r8_c(h) RESULT(res) BIND(C, name="vec_capacity_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t)  :: res
     END FUNCTION
 
     SUBROUTINE vec_upload_r8_c(h) BIND(C, name="vec_upload_r8")
@@ -457,179 +534,308 @@ MODULE Device_Vector
       TYPE(c_ptr), VALUE :: src, map, dst
     END SUBROUTINE
 
-    FUNCTION vec_clone_r8_c(h) BIND(C, name="vec_clone_r8")
+    FUNCTION vec_clone_r8_c(h) RESULT(res) BIND(C, name="vec_clone_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      TYPE(c_ptr)        :: vec_clone_r8_c
+      TYPE(c_ptr)        :: res
     END FUNCTION
 
-    ! --- Reductions (Full) ---
-    FUNCTION vec_sum_r8_c(h) BIND(C, name="vec_sum_r8")
+    FUNCTION vec_sum_r8_c(h) RESULT(res) BIND(C, name="vec_sum_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      REAL(c_double)     :: vec_sum_r8_c
+      REAL(c_double)     :: res
     END FUNCTION
-    FUNCTION vec_min_r8_c(h) BIND(C, name="vec_min_r8")
+    
+    FUNCTION vec_sum_partial_r8_c(h, n) RESULT(res) BIND(C, name="vec_sum_partial_r8")
       IMPORT
       TYPE(c_ptr), VALUE :: h
-      REAL(c_double)     :: vec_min_r8_c
-    END FUNCTION
-    FUNCTION vec_max_r8_c(h) BIND(C, name="vec_max_r8")
-      IMPORT
-      TYPE(c_ptr), VALUE :: h
-      REAL(c_double)     :: vec_max_r8_c
-    END FUNCTION
-
-    ! --- Reductions (Partial) ---
-    FUNCTION vec_sum_partial_r8_c(h, n) BIND(C, name="vec_sum_partial_r8")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
       INTEGER(c_size_t), VALUE :: n
-      REAL(c_double)           :: vec_sum_partial_r8_c
-    END FUNCTION
-    FUNCTION vec_min_partial_r8_c(h, n) BIND(C, name="vec_min_partial_r8")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      REAL(c_double)           :: vec_min_partial_r8_c
-    END FUNCTION
-    FUNCTION vec_max_partial_r8_c(h, n) BIND(C, name="vec_max_partial_r8")
-      IMPORT
-      TYPE(c_ptr), VALUE       :: h
-      INTEGER(c_size_t), VALUE :: n
-      REAL(c_double)           :: vec_max_partial_r8_c
+      REAL(c_double)     :: res
     END FUNCTION
 
-
-    ! ==================================================================
-    ! Sort Interface (Integer Only for Keys)
-    ! ==================================================================
-    SUBROUTINE vec_sort_pairs_i4_c(keys_in, keys_buf, vals_in, vals_buf, n) &
-          BIND(C, NAME='vec_sort_pairs_i4_c')
+    FUNCTION vec_min_r8_c(h) RESULT(res) BIND(C, name="vec_min_r8")
       IMPORT
-      TYPE(C_PTR), VALUE :: keys_in, keys_buf, vals_in, vals_buf
-      INTEGER(C_SIZE_T), VALUE :: n
+      TYPE(c_ptr), VALUE :: h
+      REAL(c_double)     :: res
+    END FUNCTION
+    FUNCTION vec_min_partial_r8_c(h, n) RESULT(res) BIND(C, name="vec_min_partial_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t), VALUE :: n
+      REAL(c_double)     :: res
+    END FUNCTION
+
+    FUNCTION vec_max_r8_c(h) RESULT(res) BIND(C, name="vec_max_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      REAL(c_double)     :: res
+    END FUNCTION
+    FUNCTION vec_max_partial_r8_c(h, n) RESULT(res) BIND(C, name="vec_max_partial_r8")
+      IMPORT
+      TYPE(c_ptr), VALUE :: h
+      INTEGER(c_size_t), VALUE :: n
+      REAL(c_double)     :: res
+    END FUNCTION
+
+    ! --- Sort ---
+    SUBROUTINE vec_sort_pairs_i4_c(kin, kbuf, vin, vbuf, n) BIND(C, name="vec_sort_pairs_i4_c")
+      IMPORT
+      TYPE(C_PTR), VALUE :: kin, kbuf, vin, vbuf
+      INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
 
   END INTERFACE
 
   ! ====================================================================
-  ! Smart Wrapper Classes (device_vector_xx_t)
+  ! 3. Abstract Base Class
+  ! ====================================================================
+  TYPE, ABSTRACT :: device_vector_base_t
+     TYPE(c_ptr) :: handle = C_NULL_PTR
+     TYPE(c_ptr) :: data = C_NULL_PTR  ! Host Mirror Pointer (Managed by C++)
+   CONTAINS
+     ! -- Lifecycle --
+     PROCEDURE(impl_create_vector_base), DEFERRED, PASS :: create_vector
+     PROCEDURE(impl_create_buffer_base), DEFERRED, PASS :: create_buffer
+     PROCEDURE(impl_free_base),          DEFERRED, PASS :: free
+     
+     ! -- Memory Ops --
+     PROCEDURE(impl_resize_base),        DEFERRED, PASS :: resize
+     PROCEDURE(impl_reserve_base),       DEFERRED, PASS :: reserve
+     PROCEDURE(impl_copy_from_base),     DEFERRED, PASS :: copy_from
+     
+     ! -- Transfers --
+     PROCEDURE(impl_upload_base),        DEFERRED, PASS :: upload
+     PROCEDURE(impl_download_base),      DEFERRED, PASS :: download
+     
+     ! -- Utils --
+     PROCEDURE(impl_fill_zero_base),     DEFERRED, PASS :: fill_zero
+     PROCEDURE(impl_get_handle_base),    DEFERRED, PASS :: get_handle
+     PROCEDURE(impl_device_ptr_base),    DEFERRED, PASS :: device_ptr
+     
+     ! -- Properties --
+     PROCEDURE(impl_size_base),          DEFERRED, PASS :: size
+     PROCEDURE(impl_capacity_base),      DEFERRED, PASS :: capacity
+     
+     ! -- Internal Helper --
+     PROCEDURE(impl_sync_host_ptr_base), DEFERRED, PASS :: sync_host_ptr
+  END TYPE device_vector_base_t
+
+  ! Interfaces for Deferred Procedures
+  INTERFACE
+     SUBROUTINE impl_create_vector_base(this, n)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+       INTEGER(8), INTENT(IN) :: n
+     END SUBROUTINE impl_create_vector_base
+
+     SUBROUTINE impl_create_buffer_base(this, n, pinned)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+       INTEGER(8), INTENT(IN) :: n
+       LOGICAL, INTENT(IN), OPTIONAL :: pinned
+     END SUBROUTINE impl_create_buffer_base
+
+     SUBROUTINE impl_free_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+     END SUBROUTINE impl_free_base
+
+     SUBROUTINE impl_resize_base(this, n)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+       INTEGER(8), INTENT(IN) :: n
+     END SUBROUTINE impl_resize_base
+
+     SUBROUTINE impl_reserve_base(this, n)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+       INTEGER(8), INTENT(IN) :: n
+     END SUBROUTINE impl_reserve_base
+
+     SUBROUTINE impl_copy_from_base(this, other)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+       CLASS(device_vector_base_t), INTENT(IN)    :: other
+     END SUBROUTINE impl_copy_from_base
+
+     SUBROUTINE impl_upload_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+     END SUBROUTINE impl_upload_base
+
+     SUBROUTINE impl_download_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+     END SUBROUTINE impl_download_base
+
+     SUBROUTINE impl_fill_zero_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+     END SUBROUTINE impl_fill_zero_base
+
+     TYPE(C_PTR) FUNCTION impl_get_handle_base(this)
+       USE iso_c_binding
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(IN) :: this
+     END FUNCTION impl_get_handle_base
+
+     TYPE(C_PTR) FUNCTION impl_device_ptr_base(this)
+       USE iso_c_binding
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(IN) :: this
+     END FUNCTION impl_device_ptr_base
+
+     INTEGER(8) FUNCTION impl_size_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(IN) :: this
+     END FUNCTION impl_size_base
+
+     INTEGER(8) FUNCTION impl_capacity_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(IN) :: this
+     END FUNCTION impl_capacity_base
+
+     SUBROUTINE impl_sync_host_ptr_base(this)
+       IMPORT :: device_vector_base_t
+       CLASS(device_vector_base_t), INTENT(INOUT) :: this
+     END SUBROUTINE impl_sync_host_ptr_base
+  END INTERFACE
+
+  ! ====================================================================
+  ! 4. Concrete Types
   ! ====================================================================
 
-  ! --- device_vector_i4_t ---
-  TYPE :: device_vector_i4_t
-    TYPE(c_ptr), PRIVATE :: handle = C_NULL_PTR
-    INTEGER(4), POINTER, PUBLIC :: data(:) => NULL()
-  CONTAINS
-    PROCEDURE :: create   => impl_create_i4
-    PROCEDURE :: resize   => impl_resize_i4
-    PROCEDURE :: free     => impl_free_i4
-    PROCEDURE :: upload   => impl_upload_i4
-    PROCEDURE :: download => impl_download_i4
-    PROCEDURE :: fill_zero => impl_fill_zero_i4
-    PROCEDURE :: get_handle => impl_get_handle_i4
-    PROCEDURE :: get_device_ptr => impl_get_device_ptr_i4
+  ! --- I4 ---
+  TYPE, EXTENDS(device_vector_base_t) :: device_vector_i4_t
+     INTEGER(4), POINTER :: ptr(:) => NULL() ! Accessor for Host Data
+   CONTAINS
+     PROCEDURE :: create_vector => impl_create_vector_i4
+     PROCEDURE :: create_buffer => impl_create_buffer_i4
+     PROCEDURE :: free          => impl_free_i4
+     PROCEDURE :: resize        => impl_resize_i4
+     PROCEDURE :: reserve       => impl_reserve_i4
+     PROCEDURE :: copy_from     => impl_copy_from_i4
+     PROCEDURE :: upload        => impl_upload_i4
+     PROCEDURE :: download      => impl_download_i4
+     PROCEDURE :: fill_zero     => impl_fill_zero_i4
+     PROCEDURE :: get_handle    => impl_get_handle_i4
+     PROCEDURE :: device_ptr    => impl_device_ptr_i4
+     PROCEDURE :: size          => impl_size_i4
+     PROCEDURE :: capacity      => impl_capacity_i4
+     PROCEDURE :: sync_host_ptr => impl_sync_host_ptr_i4
+     PROCEDURE :: host_data     => impl_host_data_i4
+     PROCEDURE :: sum           => impl_sum_i4
+     PROCEDURE :: min           => impl_min_i4 ! <--- Fixed
+     PROCEDURE :: max           => impl_max_i4 ! <--- Fixed
   END TYPE device_vector_i4_t
 
-  ! --- device_vector_i8_t ---
-  TYPE :: device_vector_i8_t
-    TYPE(c_ptr), PRIVATE :: handle = C_NULL_PTR
-    INTEGER(8), POINTER, PUBLIC :: data(:) => NULL()
-  CONTAINS
-    PROCEDURE :: create   => impl_create_i8
-    PROCEDURE :: resize   => impl_resize_i8
-    PROCEDURE :: free     => impl_free_i8
-    PROCEDURE :: upload   => impl_upload_i8
-    PROCEDURE :: download => impl_download_i8
-    PROCEDURE :: fill_zero => impl_fill_zero_i8
-    PROCEDURE :: get_handle => impl_get_handle_i8
-    PROCEDURE :: get_device_ptr => impl_get_device_ptr_i8
+  ! --- I8 ---
+  TYPE, EXTENDS(device_vector_base_t) :: device_vector_i8_t
+     INTEGER(8), POINTER :: ptr(:) => NULL()
+   CONTAINS
+     PROCEDURE :: create_vector => impl_create_vector_i8
+     PROCEDURE :: create_buffer => impl_create_buffer_i8
+     PROCEDURE :: free          => impl_free_i8
+     PROCEDURE :: resize        => impl_resize_i8
+     PROCEDURE :: reserve       => impl_reserve_i8
+     PROCEDURE :: copy_from     => impl_copy_from_i8
+     PROCEDURE :: upload        => impl_upload_i8
+     PROCEDURE :: download      => impl_download_i8
+     PROCEDURE :: fill_zero     => impl_fill_zero_i8
+     PROCEDURE :: get_handle    => impl_get_handle_i8
+     PROCEDURE :: device_ptr    => impl_device_ptr_i8
+     PROCEDURE :: size          => impl_size_i8
+     PROCEDURE :: capacity      => impl_capacity_i8
+     PROCEDURE :: sync_host_ptr => impl_sync_host_ptr_i8
+     PROCEDURE :: host_data     => impl_host_data_i8
+     PROCEDURE :: sum           => impl_sum_i8
+     PROCEDURE :: min           => impl_min_i8 ! <--- Fixed
+     PROCEDURE :: max           => impl_max_i8 ! <--- Fixed
   END TYPE device_vector_i8_t
 
-  ! --- device_vector_r4_t ---
-  TYPE :: device_vector_r4_t
-    TYPE(c_ptr), PRIVATE :: handle = C_NULL_PTR
-    REAL(4), POINTER, PUBLIC :: data(:) => NULL()
-  CONTAINS
-    PROCEDURE :: create   => impl_create_r4
-    PROCEDURE :: resize   => impl_resize_r4
-    PROCEDURE :: free     => impl_free_r4
-    PROCEDURE :: upload   => impl_upload_r4
-    PROCEDURE :: download => impl_download_r4
-    PROCEDURE :: fill_zero => impl_fill_zero_r4
-    PROCEDURE :: get_handle => impl_get_handle_r4
-    PROCEDURE :: get_device_ptr => impl_get_device_ptr_r4
+  ! --- R4 ---
+  TYPE, EXTENDS(device_vector_base_t) :: device_vector_r4_t
+     REAL(4), POINTER :: ptr(:) => NULL()
+   CONTAINS
+     PROCEDURE :: create_vector => impl_create_vector_r4
+     PROCEDURE :: create_buffer => impl_create_buffer_r4
+     PROCEDURE :: free          => impl_free_r4
+     PROCEDURE :: resize        => impl_resize_r4
+     PROCEDURE :: reserve       => impl_reserve_r4
+     PROCEDURE :: copy_from     => impl_copy_from_r4
+     PROCEDURE :: upload        => impl_upload_r4
+     PROCEDURE :: download      => impl_download_r4
+     PROCEDURE :: fill_zero     => impl_fill_zero_r4
+     PROCEDURE :: get_handle    => impl_get_handle_r4
+     PROCEDURE :: device_ptr    => impl_device_ptr_r4
+     PROCEDURE :: size          => impl_size_r4
+     PROCEDURE :: capacity      => impl_capacity_r4
+     PROCEDURE :: sync_host_ptr => impl_sync_host_ptr_r4
+     PROCEDURE :: host_data     => impl_host_data_r4
+     PROCEDURE :: sum           => impl_sum_r4
+     PROCEDURE :: min           => impl_min_r4 ! <--- Fixed
+     PROCEDURE :: max           => impl_max_r4 ! <--- Fixed
   END TYPE device_vector_r4_t
 
-  ! --- device_vector_r8_t ---
-  TYPE :: device_vector_r8_t
-    TYPE(c_ptr), PRIVATE :: handle = C_NULL_PTR
-    REAL(8), POINTER, PUBLIC :: data(:) => NULL()
-  CONTAINS
-    PROCEDURE :: create   => impl_create_r8
-    PROCEDURE :: resize   => impl_resize_r8
-    PROCEDURE :: free     => impl_free_r8
-    PROCEDURE :: upload   => impl_upload_r8
-    PROCEDURE :: download => impl_download_r8
-    PROCEDURE :: fill_zero => impl_fill_zero_r8
-    PROCEDURE :: get_handle => impl_get_handle_r8
-    PROCEDURE :: get_device_ptr => impl_get_device_ptr_r8
+  ! --- R8 ---
+  TYPE, EXTENDS(device_vector_base_t) :: device_vector_r8_t
+     REAL(8), POINTER :: ptr(:) => NULL()
+   CONTAINS
+     PROCEDURE :: create_vector => impl_create_vector_r8
+     PROCEDURE :: create_buffer => impl_create_buffer_r8
+     PROCEDURE :: free          => impl_free_r8
+     PROCEDURE :: resize        => impl_resize_r8
+     PROCEDURE :: reserve       => impl_reserve_r8
+     PROCEDURE :: copy_from     => impl_copy_from_r8
+     PROCEDURE :: upload        => impl_upload_r8
+     PROCEDURE :: download      => impl_download_r8
+     PROCEDURE :: fill_zero     => impl_fill_zero_r8
+     PROCEDURE :: get_handle    => impl_get_handle_r8
+     PROCEDURE :: device_ptr    => impl_device_ptr_r8
+     PROCEDURE :: size          => impl_size_r8
+     PROCEDURE :: capacity      => impl_capacity_r8
+     PROCEDURE :: sync_host_ptr => impl_sync_host_ptr_r8
+     PROCEDURE :: host_data     => impl_host_data_r8
+     PROCEDURE :: sum           => impl_sum_r8
+     PROCEDURE :: min           => impl_min_r8 ! <--- Fixed
+     PROCEDURE :: max           => impl_max_r8 ! <--- Fixed
   END TYPE device_vector_r8_t
-
 
 CONTAINS
 
   ! ====================================================================
-  ! Class Implementations 
+  ! IMPLEMENTATIONS: I4
   ! ====================================================================
-
-  ! --------------------------------------------------------------------
-  ! Impl: i4
-  ! --------------------------------------------------------------------
-  SUBROUTINE impl_create_i4(this, n, mode)
-    CLASS(device_vector_i4_t), INTENT(OUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN), OPTIONAL :: mode
-    INTEGER :: m
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    m = 0; IF (PRESENT(mode)) m = mode
-    this%handle = vec_create_i4_c(INT(n, c_size_t), INT(m, c_int))
-    
-    ! Sync Pointer
-    raw_c_ptr = vec_host_i4_c(this%handle)
-    sz        = vec_size_i4_c(this%handle)
-
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
-    END IF
-
-  END SUBROUTINE impl_create_i4
-
-  SUBROUTINE impl_resize_i4(this, n)
+  SUBROUTINE impl_create_vector_i4(this, n)
     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    TYPE(c_ptr) :: raw_c_ptr
-    !INTEGER(c_size_t) :: sz
+    ! Create Compute Vector (Mode 2)
+    this%handle = vec_new_vector_i4_c(INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_vector_i4
 
-    ! 1. Call C++ Resize
-    CALL vec_resize_i4_c(this%handle, INT(n, c_size_t))
-
-    ! 2. Auto-Sync Pointer
-    raw_c_ptr = vec_host_i4_c(this%handle)
-    !sz        = vec_size_i4_c(this%handle)
+  SUBROUTINE impl_create_buffer_i4(this, n, pinned)
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    LOGICAL, INTENT(IN), OPTIONAL :: pinned
+    LOGICAL(c_bool) :: is_pinned
     
-    IF (n > 0) THEN
-    !  CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    CALL C_F_POINTER(raw_c_ptr, this%data, [n])
-    ELSE
-      NULLIFY(this%data)
+    ! Default to Pinned (Mode 0) for Buffers
+    is_pinned = .TRUE.
+    IF (PRESENT(pinned)) THEN
+       IF (.NOT. pinned) is_pinned = .FALSE.
     END IF
-  END SUBROUTINE impl_resize_i4
+    
+    this%handle = vec_new_buffer_i4_c(INT(n, c_size_t), is_pinned)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_buffer_i4
+
+  SUBROUTINE impl_copy_from_i4(this, other)
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+    CLASS(device_vector_base_t), INTENT(IN)  :: other
+    CALL vec_copy_from_i4_c(this%handle, other%handle)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_copy_from_i4
 
   SUBROUTINE impl_free_i4(this)
     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
@@ -637,192 +843,122 @@ CONTAINS
        CALL vec_delete_i4_c(this%handle)
        this%handle = C_NULL_PTR
     END IF
-    NULLIFY(this%data)
+    NULLIFY(this%ptr)
   END SUBROUTINE impl_free_i4
 
+  SUBROUTINE impl_resize_i4(this, n)
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_resize_i4_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_resize_i4
+
+  SUBROUTINE impl_reserve_i4(this, n)
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_reserve_i4_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_reserve_i4
+
   SUBROUTINE impl_upload_i4(this)
-    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
     CALL vec_upload_i4_c(this%handle)
   END SUBROUTINE impl_upload_i4
 
   SUBROUTINE impl_download_i4(this)
-    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
     CALL vec_download_i4_c(this%handle)
   END SUBROUTINE impl_download_i4
 
   SUBROUTINE impl_fill_zero_i4(this)
-    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
     CALL vec_fill_zero_i4_c(this%handle)
   END SUBROUTINE impl_fill_zero_i4
 
+  TYPE(C_PTR) FUNCTION impl_get_handle_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    impl_get_handle_i4 = this%handle
+  END FUNCTION impl_get_handle_i4
 
-  ! --------------------------------------------------------------------
-  ! Impl: r8 (Double)
-  ! --------------------------------------------------------------------
-  SUBROUTINE impl_create_r8(this, n, mode)
-    CLASS(device_vector_r8_t), INTENT(OUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN), OPTIONAL :: mode
-    INTEGER :: m
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
+  TYPE(C_PTR) FUNCTION impl_device_ptr_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    impl_device_ptr_i4 = vec_dev_i4_c(this%handle)
+  END FUNCTION impl_device_ptr_i4
 
-    m = 0; IF (PRESENT(mode)) m = mode
-    this%handle = vec_create_r8_c(INT(n, c_size_t), INT(m, c_int))
-    
-    ! Sync Pointer
-    raw_c_ptr = vec_host_r8_c(this%handle)
-    sz = vec_size_r8_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
+  INTEGER(8) FUNCTION impl_size_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    impl_size_i4 = INT(vec_size_i4_c(this%handle), 8)
+  END FUNCTION impl_size_i4
+
+  INTEGER(8) FUNCTION impl_capacity_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    impl_capacity_i4 = INT(vec_capacity_i4_c(this%handle), 8)
+  END FUNCTION impl_capacity_i4
+
+  SUBROUTINE impl_sync_host_ptr_i4(this)
+    CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+    TYPE(C_PTR) :: raw
+    INTEGER(8) :: n
+    raw = vec_host_i4_c(this%handle)
+    n = INT(vec_size_i4_c(this%handle), 8)
+    IF (C_ASSOCIATED(raw) .AND. n > 0) THEN
+       CALL C_F_POINTER(raw, this%ptr, [n])
     ELSE
-      NULLIFY(this%data)
+       NULLIFY(this%ptr)
     END IF
-  END SUBROUTINE impl_create_r8
+  END SUBROUTINE impl_sync_host_ptr_i4
 
-  SUBROUTINE impl_resize_r8(this, n)
-    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
+  SUBROUTINE impl_host_data_i4(this, p)
+     CLASS(device_vector_i4_t), INTENT(IN) :: this
+     INTEGER(4), POINTER, INTENT(OUT) :: p(:)
+     p => this%ptr
+  END SUBROUTINE impl_host_data_i4
 
-    CALL vec_resize_r8_c(this%handle, INT(n, c_size_t))
+  INTEGER(4) FUNCTION impl_sum_i4(this)
+     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+     impl_sum_i4 = vec_sum_i4_c(this%handle)
+  END FUNCTION impl_sum_i4
 
-    ! Auto-Sync Pointer
-    raw_c_ptr = vec_host_r8_c(this%handle)
-    sz = vec_size_r8_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
-    END IF
-  END SUBROUTINE impl_resize_r8
+  INTEGER(4) FUNCTION impl_min_i4(this)
+     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+     impl_min_i4 = vec_min_i4_c(this%handle)
+  END FUNCTION impl_min_i4
 
-  SUBROUTINE impl_free_r8(this)
-    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
-    IF (C_ASSOCIATED(this%handle)) THEN
-       CALL vec_delete_r8_c(this%handle)
-       this%handle = C_NULL_PTR
-    END IF
-    NULLIFY(this%data)
-  END SUBROUTINE impl_free_r8
-
-  SUBROUTINE impl_upload_r8(this)
-    CLASS(device_vector_r8_t), INTENT(IN) :: this
-    CALL vec_upload_r8_c(this%handle)
-  END SUBROUTINE impl_upload_r8
-
-  SUBROUTINE impl_download_r8(this)
-    CLASS(device_vector_r8_t), INTENT(IN) :: this
-    CALL vec_download_r8_c(this%handle)
-  END SUBROUTINE impl_download_r8
-
-  SUBROUTINE impl_fill_zero_r8(this)
-    CLASS(device_vector_r8_t), INTENT(IN) :: this
-    CALL vec_fill_zero_r8_c(this%handle)
-  END SUBROUTINE impl_fill_zero_r8
+  INTEGER(4) FUNCTION impl_max_i4(this)
+     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
+     impl_max_i4 = vec_max_i4_c(this%handle)
+  END FUNCTION impl_max_i4
 
 
-  ! --------------------------------------------------------------------
-  ! Impl: r4 (Float)
-  ! --------------------------------------------------------------------
-  SUBROUTINE impl_create_r4(this, n, mode)
-    CLASS(device_vector_r4_t), INTENT(OUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN), OPTIONAL :: mode
-    INTEGER :: m
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    m = 0; IF (PRESENT(mode)) m = mode
-    this%handle = vec_create_r4_c(INT(n, c_size_t), INT(m, c_int))
-    raw_c_ptr = vec_host_r4_c(this%handle)
-    sz = vec_size_r4_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
-    END IF
-  END SUBROUTINE impl_create_r4
-
-  SUBROUTINE impl_resize_r4(this, n)
-    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    CALL vec_resize_r4_c(this%handle, INT(n, c_size_t))
-    raw_c_ptr = vec_host_r4_c(this%handle)
-    sz = vec_size_r4_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
-    END IF
-  END SUBROUTINE impl_resize_r4
-
-  SUBROUTINE impl_free_r4(this)
-    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
-    IF (C_ASSOCIATED(this%handle)) THEN
-       CALL vec_delete_r4_c(this%handle)
-       this%handle = C_NULL_PTR
-    END IF
-    NULLIFY(this%data)
-  END SUBROUTINE impl_free_r4
-
-  SUBROUTINE impl_upload_r4(this)
-    CLASS(device_vector_r4_t), INTENT(IN) :: this
-    CALL vec_upload_r4_c(this%handle)
-  END SUBROUTINE impl_upload_r4
-
-  SUBROUTINE impl_download_r4(this)
-    CLASS(device_vector_r4_t), INTENT(IN) :: this
-    CALL vec_download_r4_c(this%handle)
-  END SUBROUTINE impl_download_r4
-
-  SUBROUTINE impl_fill_zero_r4(this)
-    CLASS(device_vector_r4_t), INTENT(IN) :: this
-    CALL vec_fill_zero_r4_c(this%handle)
-  END SUBROUTINE impl_fill_zero_r4
-
-
-  ! --------------------------------------------------------------------
-  ! Impl: i8 (Long Long)
-  ! --------------------------------------------------------------------
-  SUBROUTINE impl_create_i8(this, n, mode)
-    CLASS(device_vector_i8_t), INTENT(OUT) :: this
-    INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN), OPTIONAL :: mode
-    INTEGER :: m
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    m = 0; IF (PRESENT(mode)) m = mode
-    this%handle = vec_create_i8_c(INT(n, c_size_t), INT(m, c_int))
-    raw_c_ptr = vec_host_i8_c(this%handle)
-    sz = vec_size_i8_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
-    END IF
-  END SUBROUTINE impl_create_i8
-
-  SUBROUTINE impl_resize_i8(this, n)
+  ! ====================================================================
+  ! IMPLEMENTATIONS: I8
+  ! ====================================================================
+  SUBROUTINE impl_create_vector_i8(this, n)
     CLASS(device_vector_i8_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
+    this%handle = vec_new_vector_i8_c(INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_vector_i8
 
-    CALL vec_resize_i8_c(this%handle, INT(n, c_size_t))
-    raw_c_ptr = vec_host_i8_c(this%handle)
-    sz = vec_size_i8_c(this%handle)
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
-    ELSE
-      NULLIFY(this%data)
+  SUBROUTINE impl_create_buffer_i8(this, n, pinned)
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    LOGICAL, INTENT(IN), OPTIONAL :: pinned
+    LOGICAL(c_bool) :: is_pinned
+    is_pinned = .TRUE.
+    IF (PRESENT(pinned)) THEN
+       IF (.NOT. pinned) is_pinned = .FALSE.
     END IF
-  END SUBROUTINE impl_resize_i8
+    this%handle = vec_new_buffer_i8_c(INT(n, c_size_t), is_pinned)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_buffer_i8
+
+  SUBROUTINE impl_copy_from_i8(this, other)
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+    CLASS(device_vector_base_t), INTENT(IN)  :: other
+    CALL vec_copy_from_i8_c(this%handle, other%handle)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_copy_from_i8
 
   SUBROUTINE impl_free_i8(this)
     CLASS(device_vector_i8_t), INTENT(INOUT) :: this
@@ -830,542 +966,353 @@ CONTAINS
        CALL vec_delete_i8_c(this%handle)
        this%handle = C_NULL_PTR
     END IF
-    NULLIFY(this%data)
+    NULLIFY(this%ptr)
   END SUBROUTINE impl_free_i8
 
+  SUBROUTINE impl_resize_i8(this, n)
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_resize_i8_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_resize_i8
+
+  SUBROUTINE impl_reserve_i8(this, n)
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_reserve_i8_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_reserve_i8
+
   SUBROUTINE impl_upload_i8(this)
-    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
     CALL vec_upload_i8_c(this%handle)
   END SUBROUTINE impl_upload_i8
 
   SUBROUTINE impl_download_i8(this)
-    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
     CALL vec_download_i8_c(this%handle)
   END SUBROUTINE impl_download_i8
 
   SUBROUTINE impl_fill_zero_i8(this)
-    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
     CALL vec_fill_zero_i8_c(this%handle)
   END SUBROUTINE impl_fill_zero_i8
 
+  TYPE(C_PTR) FUNCTION impl_get_handle_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    impl_get_handle_i8 = this%handle
+  END FUNCTION impl_get_handle_i8
+
+  TYPE(C_PTR) FUNCTION impl_device_ptr_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    impl_device_ptr_i8 = vec_dev_i8_c(this%handle)
+  END FUNCTION impl_device_ptr_i8
+
+  INTEGER(8) FUNCTION impl_size_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    impl_size_i8 = INT(vec_size_i8_c(this%handle), 8)
+  END FUNCTION impl_size_i8
+
+  INTEGER(8) FUNCTION impl_capacity_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    impl_capacity_i8 = INT(vec_capacity_i8_c(this%handle), 8)
+  END FUNCTION impl_capacity_i8
+
+  SUBROUTINE impl_sync_host_ptr_i8(this)
+    CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+    TYPE(C_PTR) :: raw
+    INTEGER(8) :: n
+    raw = vec_host_i8_c(this%handle)
+    n = INT(vec_size_i8_c(this%handle), 8)
+    IF (C_ASSOCIATED(raw) .AND. n > 0) THEN
+       CALL C_F_POINTER(raw, this%ptr, [n])
+    ELSE
+       NULLIFY(this%ptr)
+    END IF
+  END SUBROUTINE impl_sync_host_ptr_i8
+
+  SUBROUTINE impl_host_data_i8(this, p)
+     CLASS(device_vector_i8_t), INTENT(IN) :: this
+     INTEGER(8), POINTER, INTENT(OUT) :: p(:)
+     p => this%ptr
+  END SUBROUTINE impl_host_data_i8
+
+  INTEGER(8) FUNCTION impl_sum_i8(this)
+     CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+     impl_sum_i8 = vec_sum_i8_c(this%handle)
+  END FUNCTION impl_sum_i8
+
+  INTEGER(8) FUNCTION impl_min_i8(this)
+     CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+     impl_min_i8 = vec_min_i8_c(this%handle)
+  END FUNCTION impl_min_i8
+
+  INTEGER(8) FUNCTION impl_max_i8(this)
+     CLASS(device_vector_i8_t), INTENT(INOUT) :: this
+     impl_max_i8 = vec_max_i8_c(this%handle)
+  END FUNCTION impl_max_i8
+
+
   ! ====================================================================
-  ! Original Procedural Wrappers (Partially Hidden/Replaced by Class)
+  ! IMPLEMENTATIONS: R4
   ! ====================================================================
-  ! NOTE: These are kept PRIVATE because the Class replaces them, 
-  ! but the implementation logic is here if you ever need to expose them.
-  
-  FUNCTION vec_create_i4(n, mode) RESULT(ptr)
+  SUBROUTINE impl_create_vector_r4(this, n)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN)    :: mode
-    TYPE(c_ptr) :: ptr
-    ptr = vec_create_i4_c(INT(n, c_size_t), INT(mode, c_int))
-  END FUNCTION vec_create_i4
+    this%handle = vec_new_vector_r4_c(INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_vector_r4
 
-  SUBROUTINE vec_delete_i4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_delete_i4_c(ptr)
-  END SUBROUTINE vec_delete_i4
-
-  FUNCTION vec_host_i4(ptr) RESULT(f_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(4), POINTER :: f_ptr(:)
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    raw_c_ptr = vec_host_i4_c(ptr)
-    sz = vec_size_i4_c(ptr) ! Dynamic Query
-
-    IF (sz > 0) THEN
-       CALL C_F_POINTER(raw_c_ptr, f_ptr, [sz]) 
-    ELSE
-       NULLIFY(f_ptr)
-    END IF
-  END FUNCTION vec_host_i4
-
-  FUNCTION vec_dev_i4(ptr) RESULT(d_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: d_ptr
-    d_ptr = vec_dev_i4_c(ptr)
-  END FUNCTION vec_dev_i4
-
-  SUBROUTINE vec_upload_i4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_upload_i4_c(ptr)
-  END SUBROUTINE vec_upload_i4
-
-  SUBROUTINE vec_download_i4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_download_i4_c(ptr)
-  END SUBROUTINE vec_download_i4
-
-  SUBROUTINE vec_upload_part_i4(ptr, start_idx, count)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN)  :: start_idx, count
-    CALL vec_upload_part_i4_c(ptr, INT(start_idx - 1, c_size_t), INT(count, c_size_t))
-  END SUBROUTINE vec_upload_part_i4
-
-  SUBROUTINE vec_download_part_i4(ptr, start_idx, count)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN)  :: start_idx, count
-    CALL vec_download_part_i4_c(ptr, INT(start_idx - 1, c_size_t), INT(count, c_size_t))
-  END SUBROUTINE vec_download_part_i4
-
-  SUBROUTINE vec_fill_zero_i4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_fill_zero_i4_c(ptr)
-  END SUBROUTINE vec_fill_zero_i4
-
-  SUBROUTINE vec_set_value_i4(ptr, val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER, INTENT(IN)     :: val
-    CALL vec_set_value_i4_c(ptr, INT(val, c_int))
-  END SUBROUTINE vec_set_value_i4
-
-  SUBROUTINE vec_gather_i4(src, map, dst)
-    TYPE(c_ptr), INTENT(IN) :: src, map, dst
-    CALL vec_gather_i4_c(src, map, dst)
-  END SUBROUTINE vec_gather_i4
-
-  FUNCTION vec_clone_i4(ptr) RESULT(new_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: new_ptr
-    new_ptr = vec_clone_i4_c(ptr)
-  END FUNCTION vec_clone_i4
-
-  ! 🔥 Modified Reductions: Support Optional Real Size (n_opt)
-  FUNCTION vec_sum_i4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(4) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_sum_partial_i4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_sum_i4_c(ptr)
-    END IF
-  END FUNCTION vec_sum_i4
-
-  FUNCTION vec_min_i4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(4) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_min_partial_i4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_min_i4_c(ptr)
-    END IF
-  END FUNCTION vec_min_i4
-
-  FUNCTION vec_max_i4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(4) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_max_partial_i4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_max_i4_c(ptr)
-    END IF
-  END FUNCTION vec_max_i4
-
-  ! ====================================================================
-  ! Fortran Wrappers: i8
-  ! ====================================================================
-  FUNCTION vec_create_i8(n, mode) RESULT(ptr)
+  SUBROUTINE impl_create_buffer_r4(this, n, pinned)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN)    :: mode
-    TYPE(c_ptr) :: ptr
-    ptr = vec_create_i8_c(INT(n, c_size_t), INT(mode, c_int))
-  END FUNCTION vec_create_i8
-
-  SUBROUTINE vec_delete_i8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_delete_i8_c(ptr)
-  END SUBROUTINE vec_delete_i8
-
-  FUNCTION vec_host_i8(ptr) RESULT(f_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), POINTER :: f_ptr(:)
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-    raw_c_ptr = vec_host_i8_c(ptr)
-    sz = vec_size_i8_c(ptr)
-    IF (sz > 0) THEN
-       CALL C_F_POINTER(raw_c_ptr, f_ptr, [sz]) 
-    ELSE
-       NULLIFY(f_ptr)
+    LOGICAL, INTENT(IN), OPTIONAL :: pinned
+    LOGICAL(c_bool) :: is_pinned
+    is_pinned = .TRUE.
+    IF (PRESENT(pinned)) THEN
+       IF (.NOT. pinned) is_pinned = .FALSE.
     END IF
-  END FUNCTION vec_host_i8
+    this%handle = vec_new_buffer_r4_c(INT(n, c_size_t), is_pinned)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_buffer_r4
 
-  FUNCTION vec_dev_i8(ptr) RESULT(d_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: d_ptr
-    d_ptr = vec_dev_i8_c(ptr)
-  END FUNCTION vec_dev_i8
+  SUBROUTINE impl_copy_from_r4(this, other)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    CLASS(device_vector_base_t), INTENT(IN)  :: other
+    CALL vec_copy_from_r4_c(this%handle, other%handle)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_copy_from_r4
 
-  SUBROUTINE vec_upload_i8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_upload_i8_c(ptr)
-  END SUBROUTINE vec_upload_i8
-
-  SUBROUTINE vec_download_i8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_download_i8_c(ptr)
-  END SUBROUTINE vec_download_i8
-
-  SUBROUTINE vec_fill_zero_i8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_fill_zero_i8_c(ptr)
-  END SUBROUTINE vec_fill_zero_i8
-
-  SUBROUTINE vec_set_value_i8(ptr, val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN)  :: val
-    CALL vec_set_value_i8_c(ptr, INT(val, c_long_long))
-  END SUBROUTINE vec_set_value_i8
-
-  SUBROUTINE vec_gather_i8(src, map, dst)
-    TYPE(c_ptr), INTENT(IN) :: src, map, dst
-    CALL vec_gather_i8_c(src, map, dst)
-  END SUBROUTINE vec_gather_i8
-
-  FUNCTION vec_clone_i8(ptr) RESULT(new_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: new_ptr
-    new_ptr = vec_clone_i8_c(ptr)
-  END FUNCTION vec_clone_i8
-
-  FUNCTION vec_sum_i8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_sum_partial_i8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_sum_i8_c(ptr)
+  SUBROUTINE impl_free_r4(this)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    IF (C_ASSOCIATED(this%handle)) THEN
+       CALL vec_delete_r4_c(this%handle)
+       this%handle = C_NULL_PTR
     END IF
-  END FUNCTION vec_sum_i8
+    NULLIFY(this%ptr)
+  END SUBROUTINE impl_free_r4
 
-  FUNCTION vec_min_i8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_min_partial_i8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_min_i8_c(ptr)
-    END IF
-  END FUNCTION vec_min_i8
-
-  FUNCTION vec_max_i8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    INTEGER(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_max_partial_i8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_max_i8_c(ptr)
-    END IF
-  END FUNCTION vec_max_i8
-
-  ! ====================================================================
-  ! Fortran Wrappers: r4
-  ! ====================================================================
-  FUNCTION vec_create_r4(n, mode) RESULT(ptr)
+  SUBROUTINE impl_resize_r4(this, n)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN)    :: mode
-    TYPE(c_ptr) :: ptr
-    ptr = vec_create_r4_c(INT(n, c_size_t), INT(mode, c_int))
-  END FUNCTION vec_create_r4
+    CALL vec_resize_r4_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_resize_r4
 
-  SUBROUTINE vec_delete_r4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_delete_r4_c(ptr)
-  END SUBROUTINE vec_delete_r4
-
-  FUNCTION vec_host_r4(ptr) RESULT(f_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    REAL(4), POINTER :: f_ptr(:)
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-
-    raw_c_ptr = vec_host_r4_c(ptr)
-    sz = vec_size_r4_c(ptr)
-
-    IF (sz > 0) THEN
-       CALL C_F_POINTER(raw_c_ptr, f_ptr, [sz]) 
-    ELSE
-       NULLIFY(f_ptr)
-    END IF
-
-  END FUNCTION vec_host_r4
-
-  FUNCTION vec_dev_r4(ptr) RESULT(d_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: d_ptr
-    d_ptr = vec_dev_r4_c(ptr)
-  END FUNCTION vec_dev_r4
-
-  SUBROUTINE vec_upload_r4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_upload_r4_c(ptr)
-  END SUBROUTINE vec_upload_r4
-
-  SUBROUTINE vec_download_r4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_download_r4_c(ptr)
-  END SUBROUTINE vec_download_r4
-
-  SUBROUTINE vec_fill_zero_r4(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_fill_zero_r4_c(ptr)
-  END SUBROUTINE vec_fill_zero_r4
-
-  SUBROUTINE vec_set_value_r4(ptr, val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    REAL(4), INTENT(IN)     :: val
-    CALL vec_set_value_r4_c(ptr, REAL(val, c_float))
-  END SUBROUTINE vec_set_value_r4
-
-  SUBROUTINE vec_gather_r4(src, map, dst)
-    TYPE(c_ptr), INTENT(IN) :: src, map, dst
-    CALL vec_gather_r4_c(src, map, dst)
-  END SUBROUTINE vec_gather_r4
-
-  FUNCTION vec_clone_r4(ptr) RESULT(new_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: new_ptr
-    new_ptr = vec_clone_r4_c(ptr)
-  END FUNCTION vec_clone_r4
-
-  FUNCTION vec_sum_r4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(4) :: val
-
-    IF (PRESENT(n_opt)) THEN
-       val = vec_sum_partial_r4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_sum_r4_c(ptr)
-    END IF
-
-  END FUNCTION vec_sum_r4
-
-  FUNCTION vec_min_r4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(4) :: val
-
-    IF (PRESENT(n_opt)) THEN
-       val = vec_min_partial_r4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_min_r4_c(ptr)
-    END IF
-
-  END FUNCTION vec_min_r4
-
-  FUNCTION vec_max_r4(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(4) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_max_partial_r4_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_max_r4_c(ptr)
-    END IF
-  END FUNCTION vec_max_r4
-
-  ! ====================================================================
-  ! Fortran Wrappers: r8
-  ! ====================================================================
-  FUNCTION vec_create_r8(n, mode) RESULT(ptr)
+  SUBROUTINE impl_reserve_r4(this, n)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
-    INTEGER, INTENT(IN)    :: mode
-    TYPE(c_ptr) :: ptr
-    ptr = vec_create_r8_c(INT(n, c_size_t), INT(mode, c_int))
-  END FUNCTION vec_create_r8
+    CALL vec_reserve_r4_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_reserve_r4
 
-  SUBROUTINE vec_delete_r8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_delete_r8_c(ptr)
-  END SUBROUTINE vec_delete_r8
+  SUBROUTINE impl_upload_r4(this)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    CALL vec_upload_r4_c(this%handle)
+  END SUBROUTINE impl_upload_r4
 
-  FUNCTION vec_host_r8(ptr) RESULT(f_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    REAL(8), POINTER :: f_ptr(:)
-    TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
-    raw_c_ptr = vec_host_r8_c(ptr)
-    sz = vec_size_r8_c(ptr)
-    IF (sz > 0) THEN
-       CALL C_F_POINTER(raw_c_ptr, f_ptr, [sz]) 
+  SUBROUTINE impl_download_r4(this)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    CALL vec_download_r4_c(this%handle)
+  END SUBROUTINE impl_download_r4
+
+  SUBROUTINE impl_fill_zero_r4(this)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    CALL vec_fill_zero_r4_c(this%handle)
+  END SUBROUTINE impl_fill_zero_r4
+
+  TYPE(C_PTR) FUNCTION impl_get_handle_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    impl_get_handle_r4 = this%handle
+  END FUNCTION impl_get_handle_r4
+
+  TYPE(C_PTR) FUNCTION impl_device_ptr_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    impl_device_ptr_r4 = vec_dev_r4_c(this%handle)
+  END FUNCTION impl_device_ptr_r4
+
+  INTEGER(8) FUNCTION impl_size_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    impl_size_r4 = INT(vec_size_r4_c(this%handle), 8)
+  END FUNCTION impl_size_r4
+
+  INTEGER(8) FUNCTION impl_capacity_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    impl_capacity_r4 = INT(vec_capacity_r4_c(this%handle), 8)
+  END FUNCTION impl_capacity_r4
+
+  SUBROUTINE impl_sync_host_ptr_r4(this)
+    CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+    TYPE(C_PTR) :: raw
+    INTEGER(8) :: n
+    raw = vec_host_r4_c(this%handle)
+    n = INT(vec_size_r4_c(this%handle), 8)
+    IF (C_ASSOCIATED(raw) .AND. n > 0) THEN
+       CALL C_F_POINTER(raw, this%ptr, [n])
     ELSE
-       NULLIFY(f_ptr)
+       NULLIFY(this%ptr)
     END IF
-  END FUNCTION vec_host_r8
+  END SUBROUTINE impl_sync_host_ptr_r4
 
-  FUNCTION vec_dev_r8(ptr) RESULT(d_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: d_ptr
-    d_ptr = vec_dev_r8_c(ptr)
-  END FUNCTION vec_dev_r8
+  SUBROUTINE impl_host_data_r4(this, p)
+     CLASS(device_vector_r4_t), INTENT(IN) :: this
+     REAL(4), POINTER, INTENT(OUT) :: p(:)
+     p => this%ptr
+  END SUBROUTINE impl_host_data_r4
 
-  SUBROUTINE vec_upload_r8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_upload_r8_c(ptr)
-  END SUBROUTINE vec_upload_r8
+  REAL(4) FUNCTION impl_sum_r4(this)
+     CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+     impl_sum_r4 = vec_sum_r4_c(this%handle)
+  END FUNCTION impl_sum_r4
 
-  SUBROUTINE vec_download_r8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_download_r8_c(ptr)
-  END SUBROUTINE vec_download_r8
+  REAL(4) FUNCTION impl_min_r4(this)
+     CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+     impl_min_r4 = vec_min_r4_c(this%handle)
+  END FUNCTION impl_min_r4
 
-  SUBROUTINE vec_fill_zero_r8(ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    CALL vec_fill_zero_r8_c(ptr)
-  END SUBROUTINE vec_fill_zero_r8
+  REAL(4) FUNCTION impl_max_r4(this)
+     CLASS(device_vector_r4_t), INTENT(INOUT) :: this
+     impl_max_r4 = vec_max_r4_c(this%handle)
+  END FUNCTION impl_max_r4
 
-  SUBROUTINE vec_set_value_r8(ptr, val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    REAL(8), INTENT(IN)     :: val
-    CALL vec_set_value_r8_c(ptr, REAL(val, c_double))
-  END SUBROUTINE vec_set_value_r8
-
-  SUBROUTINE vec_gather_r8(src, map, dst)
-    TYPE(c_ptr), INTENT(IN) :: src, map, dst
-    CALL vec_gather_r8_c(src, map, dst)
-  END SUBROUTINE vec_gather_r8
-
-  FUNCTION vec_clone_r8(ptr) RESULT(new_ptr)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    TYPE(c_ptr) :: new_ptr
-    new_ptr = vec_clone_r8_c(ptr)
-  END FUNCTION vec_clone_r8
-
-  FUNCTION vec_sum_r8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_sum_partial_r8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_sum_r8_c(ptr)
-    END IF
-  END FUNCTION vec_sum_r8
-
-  FUNCTION vec_min_r8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_min_partial_r8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_min_r8_c(ptr)
-    END IF
-  END FUNCTION vec_min_r8
-
-  FUNCTION vec_max_r8(ptr, n_opt) RESULT(val)
-    TYPE(c_ptr), INTENT(IN) :: ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
-    REAL(8) :: val
-    IF (PRESENT(n_opt)) THEN
-       val = vec_max_partial_r8_c(ptr, INT(n_opt, c_size_t))
-    ELSE
-       val = vec_max_r8_c(ptr)
-    END IF
-  END FUNCTION vec_max_r8
 
   ! ====================================================================
-  ! Sort Wrapper (Corrected)
+  ! IMPLEMENTATIONS: R8
+  ! ====================================================================
+  SUBROUTINE impl_create_vector_r8(this, n)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    this%handle = vec_new_vector_r8_c(INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_vector_r8
+
+  SUBROUTINE impl_create_buffer_r8(this, n, pinned)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    LOGICAL, INTENT(IN), OPTIONAL :: pinned
+    LOGICAL(c_bool) :: is_pinned
+    is_pinned = .TRUE.
+    IF (PRESENT(pinned)) THEN
+       IF (.NOT. pinned) is_pinned = .FALSE.
+    END IF
+    this%handle = vec_new_buffer_r8_c(INT(n, c_size_t), is_pinned)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_create_buffer_r8
+
+  SUBROUTINE impl_copy_from_r8(this, other)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    CLASS(device_vector_base_t), INTENT(IN)  :: other
+    CALL vec_copy_from_r8_c(this%handle, other%handle)
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_copy_from_r8
+
+  SUBROUTINE impl_free_r8(this)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    IF (C_ASSOCIATED(this%handle)) THEN
+       CALL vec_delete_r8_c(this%handle)
+       this%handle = C_NULL_PTR
+    END IF
+    NULLIFY(this%ptr)
+  END SUBROUTINE impl_free_r8
+
+  SUBROUTINE impl_resize_r8(this, n)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_resize_r8_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_resize_r8
+
+  SUBROUTINE impl_reserve_r8(this, n)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    INTEGER(8), INTENT(IN) :: n
+    CALL vec_reserve_r8_c(this%handle, INT(n, c_size_t))
+    CALL this%sync_host_ptr()
+  END SUBROUTINE impl_reserve_r8
+
+  SUBROUTINE impl_upload_r8(this)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    CALL vec_upload_r8_c(this%handle)
+  END SUBROUTINE impl_upload_r8
+
+  SUBROUTINE impl_download_r8(this)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    CALL vec_download_r8_c(this%handle)
+  END SUBROUTINE impl_download_r8
+
+  SUBROUTINE impl_fill_zero_r8(this)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    CALL vec_fill_zero_r8_c(this%handle)
+  END SUBROUTINE impl_fill_zero_r8
+
+  TYPE(C_PTR) FUNCTION impl_get_handle_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    impl_get_handle_r8 = this%handle
+  END FUNCTION impl_get_handle_r8
+
+  TYPE(C_PTR) FUNCTION impl_device_ptr_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    impl_device_ptr_r8 = vec_dev_r8_c(this%handle)
+  END FUNCTION impl_device_ptr_r8
+
+  INTEGER(8) FUNCTION impl_size_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    impl_size_r8 = INT(vec_size_r8_c(this%handle), 8)
+  END FUNCTION impl_size_r8
+
+  INTEGER(8) FUNCTION impl_capacity_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    impl_capacity_r8 = INT(vec_capacity_r8_c(this%handle), 8)
+  END FUNCTION impl_capacity_r8
+
+  SUBROUTINE impl_sync_host_ptr_r8(this)
+    CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+    TYPE(C_PTR) :: raw
+    INTEGER(8) :: n
+    raw = vec_host_r8_c(this%handle)
+    n = INT(vec_size_r8_c(this%handle), 8)
+    IF (C_ASSOCIATED(raw) .AND. n > 0) THEN
+       CALL C_F_POINTER(raw, this%ptr, [n])
+    ELSE
+       NULLIFY(this%ptr)
+    END IF
+  END SUBROUTINE impl_sync_host_ptr_r8
+
+  SUBROUTINE impl_host_data_r8(this, p)
+     CLASS(device_vector_r8_t), INTENT(IN) :: this
+     REAL(8), POINTER, INTENT(OUT) :: p(:)
+     p => this%ptr
+  END SUBROUTINE impl_host_data_r8
+
+  REAL(8) FUNCTION impl_sum_r8(this)
+     CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+     impl_sum_r8 = vec_sum_r8_c(this%handle)
+  END FUNCTION impl_sum_r8
+
+  REAL(8) FUNCTION impl_min_r8(this)
+     CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+     impl_min_r8 = vec_min_r8_c(this%handle)
+  END FUNCTION impl_min_r8
+
+  REAL(8) FUNCTION impl_max_r8(this)
+     CLASS(device_vector_r8_t), INTENT(INOUT) :: this
+     impl_max_r8 = vec_max_r8_c(this%handle)
+  END FUNCTION impl_max_r8
+
+  ! ====================================================================
+  ! Procedural sort wrapper
   ! ====================================================================
   SUBROUTINE vec_sort_i4(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n_opt)
     TYPE(c_ptr), INTENT(IN) :: keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr
     INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
     INTEGER(c_size_t) :: n
     
-    ! 1. Determine size (use n_opt if present, else fallback to full aligned size)
     IF (PRESENT(n_opt)) THEN
         n = INT(n_opt, c_size_t)
     ELSE
         n = vec_size_i4_c(keys_ptr)
     END IF
     
-    ! 2. Call C++ Sort (Pass HANDLES directly, do NOT extract d_ptr here)
     CALL vec_sort_pairs_i4_c(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n)
   END SUBROUTINE vec_sort_i4
-
-! ====================================================================
-  ! Getter 
-  ! ====================================================================
-  FUNCTION impl_get_handle_i4(this) RESULT(ptr)
-    CLASS(device_vector_i4_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: ptr
-    ptr = this%handle
-  END FUNCTION impl_get_handle_i4
-
-  FUNCTION impl_get_handle_i8(this) RESULT(ptr)
-    CLASS(device_vector_i8_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: ptr
-    ptr = this%handle
-  END FUNCTION impl_get_handle_i8
-
-  FUNCTION impl_get_handle_r4(this) RESULT(ptr)
-    CLASS(device_vector_r4_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: ptr
-    ptr = this%handle
-  END FUNCTION impl_get_handle_r4
-
-  FUNCTION impl_get_handle_r8(this) RESULT(ptr)
-    CLASS(device_vector_r8_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: ptr
-    ptr = this%handle
-  END FUNCTION impl_get_handle_r8
-
-
-  ! --------------------------------------------------------------------
-  ! Getter: Raw Device Pointer (for OpenACC/OpenMP interop, etc.)
-  ! NOTE:
-  !   - Returned pointer is a raw CUDA device pointer (void* on C side).
-  !   - If the vector is not created, returns C_NULL_PTR.
-  !   - If the vector is resized, the returned pointer may change.
-  ! --------------------------------------------------------------------
-  FUNCTION impl_get_device_ptr_i4(this) RESULT(p)
-    CLASS(device_vector_i4_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: p
-    IF (c_associated(this%handle)) THEN
-      p = vec_dev_i4_c(this%handle)
-    ELSE
-      p = C_NULL_PTR
-    END IF
-  END FUNCTION impl_get_device_ptr_i4
-
-  FUNCTION impl_get_device_ptr_i8(this) RESULT(p)
-    CLASS(device_vector_i8_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: p
-    IF (c_associated(this%handle)) THEN
-      p = vec_dev_i8_c(this%handle)
-    ELSE
-      p = C_NULL_PTR
-    END IF
-  END FUNCTION impl_get_device_ptr_i8
-
-  FUNCTION impl_get_device_ptr_r4(this) RESULT(p)
-    CLASS(device_vector_r4_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: p
-    IF (c_associated(this%handle)) THEN
-      p = vec_dev_r4_c(this%handle)
-    ELSE
-      p = C_NULL_PTR
-    END IF
-  END FUNCTION impl_get_device_ptr_r4
-
-  FUNCTION impl_get_device_ptr_r8(this) RESULT(p)
-    CLASS(device_vector_r8_t), INTENT(IN) :: this
-    TYPE(c_ptr) :: p
-    IF (c_associated(this%handle)) THEN
-      p = vec_dev_r8_c(this%handle)
-    ELSE
-      p = C_NULL_PTR
-    END IF
-  END FUNCTION impl_get_device_ptr_r8
-
 
 END MODULE Device_Vector

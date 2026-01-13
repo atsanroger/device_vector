@@ -2,34 +2,92 @@ PROGRAM profile_resize
   USE Device_Vector
   USE cudafor
   USE iso_c_binding
+  USE openacc
   IMPLICIT NONE
 
-  ! 1. 增加迭代次數，避免時間太短
+  ! 參數設定
   INTEGER(8), PARAMETER :: N_SMALL = 1024 * 1024 * 10
   INTEGER(8), PARAMETER :: N_LARGE = 1024 * 1024 * 20
   INTEGER, PARAMETER    :: ITERATIONS = 2000 
 
-  REAL(4), ALLOCATABLE, DEVICE :: d_cf(:)
+  ! OpenACC Host Array
   REAL(4), ALLOCATABLE :: h_acc(:)
+
+  ! CUDA Fortran Device Array
+  REAL(4), ALLOCATABLE, DEVICE :: d_cf(:)
+  
+  ! DeviceVector
   TYPE(device_vector_r4_t) :: vec
 
   INTEGER :: i, istat
   INTEGER(8) :: c_start, c_end, c_rate
   REAL(8) :: t_acc, t_cf, t_dv_smart
   
-  ! 加入一個 dummy 變數防止優化
   REAL(4) :: dummy_val
 
   CALL device_env_init(0, 1)
 
-  ! [2] CUDA Fortran 修正版
+  PRINT *, "=========================================================="
+  PRINT *, "   RESIZE BENCHMARK: OpenACC vs CUDA Fortran vs DeviceVector"
+  PRINT *, "=========================================================="
+
+  ! ==================================================================
+  ! [1] OpenACC (Manual Resize Overhead)
+  ! ==================================================================
+  PRINT *, "Testing OpenACC Resize..."
+  ALLOCATE(h_acc(N_SMALL))
+  !$acc enter data create(h_acc)
+  
+  CALL device_synchronize()
+  CALL SYSTEM_CLOCK(COUNT=c_start, COUNT_RATE=c_rate)
+  
+  DO i = 1, ITERATIONS
+     ! OpenACC 沒有 realloc，必須:
+     ! 1. Exit Data (Device Free)
+     ! 2. Host Dealloc
+     ! 3. Host Alloc (New Size)
+     ! 4. Enter Data (Device Alloc)
+     
+     ! 變大
+     !$acc exit data delete(h_acc)
+     DEALLOCATE(h_acc)
+     ALLOCATE(h_acc(N_LARGE))
+     !$acc enter data create(h_acc)
+     
+     ! 簡單寫入觸發 page fault 避免 lazy allocation
+     !$acc kernels present(h_acc)
+     h_acc(1) = 1.0 
+     !$acc end kernels
+     
+     ! 變小
+     !$acc exit data delete(h_acc)
+     DEALLOCATE(h_acc)
+     ALLOCATE(h_acc(N_SMALL))
+     !$acc enter data create(h_acc)
+     
+     !$acc kernels present(h_acc)
+     h_acc(1) = 1.0
+     !$acc end kernels
+  END DO
+  
+  CALL device_synchronize()
+  CALL SYSTEM_CLOCK(COUNT=c_end)
+  t_acc = REAL(c_end - c_start) / REAL(c_rate)
+  
+  !$acc exit data delete(h_acc)
+  DEALLOCATE(h_acc)
+
+  ! ==================================================================
+  ! [2] CUDA Fortran (Manual Alloc/Dealloc)
+  ! ==================================================================
   PRINT *, "Testing CUDA Fortran Resize..."
   ALLOCATE(d_cf(N_SMALL))
   istat = cudaDeviceSynchronize()
   
-  CALL SYSTEM_CLOCK(COUNT=c_start, COUNT_RATE=c_rate)
+  CALL SYSTEM_CLOCK(COUNT=c_start)
 
   DO i = 1, ITERATIONS
+     ! 模擬業務邏輯：變大 -> 變小
      DEALLOCATE(d_cf)
      ALLOCATE(d_cf(N_LARGE))
      d_cf(1) = 1.0 
@@ -43,16 +101,21 @@ PROGRAM profile_resize
   CALL SYSTEM_CLOCK(COUNT=c_end)
   
   dummy_val = d_cf(1) 
-  
   t_cf = REAL(c_end - c_start) / REAL(c_rate)
-  PRINT *, "CUDA Fortran time:", t_cf
+  DEALLOCATE(d_cf)
 
-  ! [3] DeviceVector 修正版
-  PRINT *, "Testing DeviceVector..."
-  CALL vec%create(N_SMALL, 0)
+  ! ==================================================================
+  ! [3] DeviceVector (Compute Mode)
+  ! ==================================================================
+  PRINT *, "Testing DeviceVector (Compute Mode)..."
+  ! 使用 create_vector (Mode 2: Pure Device)
+  CALL vec%create_vector(N_SMALL)
   
   CALL SYSTEM_CLOCK(COUNT=c_start)
   DO i = 1, ITERATIONS
+    ! 這裡的 resize 會利用 Capacity 策略
+    ! 1. 變大到 N_LARGE 時，如果 Capacity 不夠才分配 (Async)
+    ! 2. 變小回 N_SMALL 時，完全不釋放記憶體 (Zero Overhead)
     CALL vec%resize(N_LARGE)
     CALL vec%resize(N_SMALL)
   END DO
@@ -63,19 +126,16 @@ PROGRAM profile_resize
   CALL vec%free()
   CALL device_env_finalize()
 
-  ! ------------------------------------------------------------------
   ! Report
-  ! ------------------------------------------------------------------
   PRINT *, "=========================================================="
-  PRINT *, "                  PERFORMANCE RESULTS                     "
+  PRINT *, "                 PERFORMANCE RESULTS                      "
   PRINT *, "=========================================================="
-  PRINT '(A, F10.4, A)', " [1] OpenACC Total Time      : ", t_acc, " s"
-  PRINT '(A, F10.4, A)', " [2] CUDA Fortran Total Time : ", t_cf,  " s"
-  PRINT '(A, F10.4, A)', " [3] DeviceVector            : ", t_dv_smart, " s"
+  PRINT '(A, F10.4, A)', " [1] OpenACC Total Time      : ", t_acc,      " s"
+  PRINT '(A, F10.4, A)', " [2] CUDA Fortran Total Time : ", t_cf,       " s"
+  PRINT '(A, F10.4, A)', " [3] DeviceVector Total Time : ", t_dv_smart, " s"
   PRINT *, "----------------------------------------------------------"
-  PRINT '(A, F10.2, A)', " Smart Speedup vs CUDA Fortran: ", t_cf / t_dv_smart, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV vs OpenACC): ", t_acc / t_dv_smart, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV vs CF)     : ", t_cf / t_dv_smart, " x"
   PRINT *, "=========================================================="
-  
-  CALL device_env_finalize()
 
 END PROGRAM profile_resize

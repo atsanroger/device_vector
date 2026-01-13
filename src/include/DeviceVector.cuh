@@ -3,21 +3,16 @@
 
 #pragma once
 
-// c++ library
 #include <vector>
 #include <algorithm>
 #include <cstddef>
 #include <limits>
-
-// CUDA library
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
-
 #include <stdexcept>
 #include <cstdio>
 #include <cstdlib>
 
-// Relatives
 #include "DeviceEnv.cuh"
 #include "DevicePtrManager.cuh"
 #include "Device_Constant.cuh"
@@ -26,10 +21,10 @@
 namespace GPU {
 
     // =========================================================
-    // Allocators
+    // Allocators (Removed MappedAllocator)
     // =========================================================
 
-    // Mode 0: Pinned Memory
+    // Mode 0: Pinned Memory (For fast D2H/H2D)
     template <typename T>
     struct PinnedAllocator {
         using value_type = T;
@@ -41,25 +36,12 @@ namespace GPU {
         void deallocate(T* ptr, std::size_t) { cudaFreeHost(ptr); }
     };
 
-    // Mode 1: Pageable Memory (Standard)
+    // Mode 1/2: Pageable Memory (Standard)
     template <typename T>
     using PageableAllocator = std::allocator<T>;
 
-    // Mode 3: Mapped Memory (Zero-Copy) - Note: Shifted to 3 to allow Mode 2 for Pure Device
-    template <typename T>
-    struct MappedAllocator {
-        using value_type = T;
-        T* allocate(std::size_t n) {
-            T* ptr;
-            unsigned int flags = cudaHostAllocMapped | cudaHostAllocPortable;
-            if (cudaHostAlloc((void**)&ptr, n * sizeof(T), flags) != cudaSuccess) throw std::bad_alloc();
-            return ptr;
-        }
-        void deallocate(T* ptr, std::size_t) { cudaFreeHost(ptr); }
-    };
-
     // =========================================================
-    // 1. Abstract Base Class (Interface)
+    // Interface
     // =========================================================
     template <typename T>
     class IDeviceVector {
@@ -68,10 +50,10 @@ namespace GPU {
 
         virtual void resize(size_t n)  = 0;
         virtual void reserve(size_t n) = 0;
+        virtual void copy_from(IDeviceVector<T>* other) = 0; // GPU-GPU Deep Copy
 
         virtual void update_device() = 0;
         virtual void update_host()   = 0;
-
         virtual void update_device(size_t offset, size_t count) = 0;
         virtual void update_host(size_t offset, size_t count)   = 0;
 
@@ -90,68 +72,62 @@ namespace GPU {
         virtual T* host_ptr()   = 0;
         virtual T* device_ptr() = 0;
 
-        virtual size_t logical_size() const = 0;
         virtual size_t size() const         = 0;
+        virtual size_t logical_size() const = 0; // [Fix] Added logical_size interface
         virtual size_t capacity() const     = 0;
     };
 
     // =========================================================
-    // 2. Implementation
+    // Implementation
     // =========================================================
     template <typename T, typename Alloc>
     class DeviceVectorImpl : public IDeviceVector<T> {
     private:
-        std::vector<T, Alloc> h_data_;
+        std::vector<T, Alloc> h_data_; // Host Mirror (Empty if use_host_mirror_ == false)
         T* d_ptr_ = nullptr;
 
         size_t logical_size_ = 0;
         size_t storage_size_ = 0;
         size_t capacity_     = 0;
 
-        int mode_       = 1; // 0=Pinned, 1=Pageable, 2=PureDevice, 3=Mapped
-        bool is_mapped_ = false;
-        int device_id_  = 0;
+        bool use_host_mirror_ = true; // [SWITCH] Controls if we maintain CPU std::vector
+        int device_id_        = 0;
 
         static size_t align_len(size_t n) {
             return ceil_warp_length(n);
         }
 
         void unregister_mapping_() {
-            if (mode_ == 2) return; // Pure device has no host mirror
-            if (storage_size_ == 0) return;
-            if (h_data_.data()) DevicePtrManager::instance().unregister_ptr(h_data_.data());
+            if (!use_host_mirror_) return; 
+            if (storage_size_ > 0 && h_data_.data()) 
+                DevicePtrManager::instance().unregister_ptr(h_data_.data());
         }
 
         void register_mapping_() {
-            if (mode_ == 2) return; // Pure device has no host mirror
-            if (storage_size_ == 0) return;
-            if (h_data_.data() && d_ptr_) {
+            if (!use_host_mirror_) return;
+            if (storage_size_ > 0 && h_data_.data() && d_ptr_) {
                 DevicePtrManager::instance().register_ptr(h_data_.data(), d_ptr_, storage_size_ * sizeof(T));
             }
         }
 
         void ensure_device_capacity_(size_t required_storage) {
-            if (is_mapped_) return;
-
             required_storage = align_len(required_storage);
             if (required_storage <= capacity_) return;
 
-            if (!DeviceEnv::instance().is_initialized()) {
-                throw std::runtime_error("DeviceEnv is not initialized.");
-            }
+            if (!DeviceEnv::instance().is_initialized()) throw std::runtime_error("DeviceEnv not initialized");
 
-            // [Strategy] Grow by 1.5x to amortize allocation cost
+            // 1.5x Growth Strategy
             size_t new_capacity = std::max(required_storage, (size_t)(capacity_ * 1.5));
             new_capacity = align_len(new_capacity);
 
             cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-
             T* new_d_ptr = nullptr;
+            
             if (cudaMallocAsync(&new_d_ptr, new_capacity * sizeof(T), stream) != cudaSuccess) {
-                throw std::runtime_error("GPU out of memory in ensure_device_capacity_!");
+                throw std::runtime_error("GPU OOM in ensure_device_capacity_");
             }
 
-            // Preserve existing content (Device to Device Copy) - Extremely Fast
+            // D2D Copy (Preserve old data)
             if (d_ptr_ && storage_size_ > 0) {
                 size_t copy_elems = std::min(storage_size_, required_storage);
                 if (copy_elems > 0) {
@@ -164,83 +140,44 @@ namespace GPU {
             capacity_ = new_capacity;
         }
 
-        void refresh_mapped_pointer_() {
-            if (!is_mapped_) return;
-            if (storage_size_ == 0 || h_data_.empty()) {
-                d_ptr_ = nullptr;
-                capacity_ = 0;
-                return;
-            }
-            if (cudaHostGetDevicePointer((void**)&d_ptr_, h_data_.data(), 0) != cudaSuccess) {
-                throw std::runtime_error("Failed to get device pointer for mapped memory");
-            }
-            capacity_ = h_data_.capacity();
-        }
-
+        // Helper for reductions
         T reduce_impl_(int op_type, size_t num_items) {
             if (storage_size_ == 0 || num_items == 0) return static_cast<T>(0);
             num_items = std::min(num_items, storage_size_);
 
-            // Helper lambdas for identity
-            const auto identity_for_min = []() -> T {
-                if constexpr (std::numeric_limits<T>::has_infinity) return std::numeric_limits<T>::infinity();
-                else return std::numeric_limits<T>::max();
-            };
-            const auto identity_for_max = []() -> T {
-                if constexpr (std::numeric_limits<T>::has_infinity) return -std::numeric_limits<T>::infinity();
-                else return std::numeric_limits<T>::lowest();
-            };
-
-            auto fill_padding_device = [&](T val, cudaStream_t stream) {
-                if (is_mapped_ || d_ptr_ == nullptr) return;
-                if (logical_size_ >= storage_size_) return;
-                const size_t pad_len = storage_size_ - logical_size_;
-                const int block = VECTOR_LENGTH;
-                const int grid = (int)std::min((pad_len + block - 1) / block, (size_t)(WARP_LENGTH * getNumSMs()));
-                set_value_kernel<T><<<grid, block, 0, stream>>>(d_ptr_ + logical_size_, val, pad_len);
-            };
-
-            // Mapped logic (CPU reduction)
-            if (is_mapped_) {
-                if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-                const size_t n = std::min(logical_size_, num_items);
-                if (n == 0) return static_cast<T>(0);
-                T result = h_data_[0];
-                if (op_type == 0) { result = 0; for(size_t i=0; i<n; ++i) result += h_data_[i]; }
-                else if (op_type == 1) { for(size_t i=1; i<n; ++i) if(h_data_[i] < result) result = h_data_[i]; }
-                else { for(size_t i=1; i<n; ++i) if(h_data_[i] > result) result = h_data_[i]; }
-                return result;
-            }
-
-            // Device reduction
             if (!DeviceEnv::instance().is_initialized()) throw std::runtime_error("DeviceEnv not initialized");
             cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
 
-            const bool touches_padding = (logical_size_ < storage_size_) && (num_items == storage_size_);
-            if (touches_padding) {
-                if (op_type == 1) fill_padding_device(identity_for_min(), stream);
-                else if (op_type == 2) fill_padding_device(identity_for_max(), stream);
+            // Handle padding for min/max safety
+            if (logical_size_ < storage_size_ && num_items == storage_size_) {
+                if (op_type == 1) { // Min
+                     T val = std::numeric_limits<T>::has_infinity ? std::numeric_limits<T>::infinity() : std::numeric_limits<T>::max();
+                     size_t pad = storage_size_ - logical_size_;
+                     int grid = std::min((size_t)(WARP_LENGTH * getNumSMs()), (pad + 255)/256);
+                     set_value_kernel<T><<<grid, 256, 0, stream>>>(d_ptr_ + logical_size_, val, pad);
+                } else if (op_type == 2) { // Max
+                     T val = std::numeric_limits<T>::has_infinity ? -std::numeric_limits<T>::infinity() : std::numeric_limits<T>::lowest();
+                     size_t pad = storage_size_ - logical_size_;
+                     int grid = std::min((size_t)(WARP_LENGTH * getNumSMs()), (pad + 255)/256);
+                     set_value_kernel<T><<<grid, 256, 0, stream>>>(d_ptr_ + logical_size_, val, pad);
+                }
             }
 
             T* d_out = nullptr;
             void* d_temp = nullptr;
             size_t temp_bytes = 0;
 
-            if (cudaMallocAsync(&d_out, sizeof(T), stream) != cudaSuccess) throw std::runtime_error("cudaMallocAsync failed");
+            cudaMallocAsync(&d_out, sizeof(T), stream);
 
             if (op_type == 0) cub::DeviceReduce::Sum(nullptr, temp_bytes, d_ptr_, d_out, num_items, stream);
             else if (op_type == 1) cub::DeviceReduce::Min(nullptr, temp_bytes, d_ptr_, d_out, num_items, stream);
             else cub::DeviceReduce::Max(nullptr, temp_bytes, d_ptr_, d_out, num_items, stream);
 
-            if (cudaMallocAsync(&d_temp, temp_bytes, stream) != cudaSuccess) {
-                cudaFreeAsync(d_out, stream); throw std::runtime_error("cudaMallocAsync temp failed");
-            }
+            cudaMallocAsync(&d_temp, temp_bytes, stream);
 
             if (op_type == 0) cub::DeviceReduce::Sum(d_temp, temp_bytes, d_ptr_, d_out, num_items, stream);
             else if (op_type == 1) cub::DeviceReduce::Min(d_temp, temp_bytes, d_ptr_, d_out, num_items, stream);
             else cub::DeviceReduce::Max(d_temp, temp_bytes, d_ptr_, d_out, num_items, stream);
-
-            if (touches_padding && (op_type == 1 || op_type == 2)) fill_padding_device(static_cast<T>(0), stream);
 
             T h_out{};
             cudaMemcpyAsync(&h_out, d_out, sizeof(T), cudaMemcpyDeviceToHost, stream);
@@ -251,81 +188,60 @@ namespace GPU {
             return h_out;
         }
 
-        void free_device_ptr_safe_() {
-            if (is_mapped_ || d_ptr_ == nullptr) return;
-            if (DeviceEnv::instance().is_initialized()) {
-                cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-                cudaFreeAsync(d_ptr_, stream);
-                cudaStreamSynchronize(stream);
-            } else {
-                cudaFree(d_ptr_); // Fallback
-            }
-            d_ptr_ = nullptr;
-        }
-
     public:
-        DeviceVectorImpl(const DeviceVectorImpl&) = delete;
-        DeviceVectorImpl& operator=(const DeviceVectorImpl&) = delete;
-        DeviceVectorImpl(DeviceVectorImpl&&) = delete;
-        DeviceVectorImpl& operator=(DeviceVectorImpl&&) = delete;
-
-        // [MODIFIED] Constructor now takes an integer mode
-        // 0: Pinned, 1: Pageable, 2: Pure Device, 3: Mapped
-        DeviceVectorImpl(size_t n = 0, int mode = 1) : mode_(mode) {
-            if (DeviceEnv::instance().is_initialized()) {
-                device_id_ = DeviceEnv::instance().get_device_id();
-            } else {
-                cudaGetDevice(&device_id_);
-            }
+        // use_host_mirror: If true, maintains std::vector. If false, acts as Pure Device Vector.
+        DeviceVectorImpl(size_t n = 0, bool use_host_mirror = true) 
+            : use_host_mirror_(use_host_mirror) {
             
-            is_mapped_ = (mode == 3); // Map "3" to IsMapped
-
+            if (DeviceEnv::instance().is_initialized()) device_id_ = DeviceEnv::instance().get_device_id();
+            else cudaGetDevice(&device_id_);
+            
             if (n > 0) resize(n);
         }
 
         ~DeviceVectorImpl() override {
             unregister_mapping_();
-            free_device_ptr_safe_();
+            if (d_ptr_) {
+                if (DeviceEnv::instance().is_initialized()) {
+                    cudaStream_t s = DeviceEnv::instance().get_compute_stream();
+                    cudaFreeAsync(d_ptr_, s);
+                    cudaStreamSynchronize(s);
+                } else {
+                    cudaFree(d_ptr_);
+                }
+            }
         }
 
-        // ---------------------------------------------------------------------
-        // [CRITICAL OPTIMIZATION] Mode 2 (Pure Device) skips Host operations
-        // ---------------------------------------------------------------------
+        // =========================================================
+        // Core Logic: Resize
+        // =========================================================
         void resize(size_t new_size) override {
             size_t new_storage_req = align_len(new_size);
 
+            // Optimization: If capacity allows, just update logical size
             if (new_storage_req <= storage_size_) {
                 logical_size_ = new_size;
                 return;
             }
 
-            // [MODE 2: Pure Device Path]
-            // Zero CPU overhead. Only GPU allocation and D2D copy.
-            if (mode_ == 2) {
+            // [Pure Device Mode]: Skip all Host operations
+            if (!use_host_mirror_) {
                 if (new_storage_req > capacity_) {
                     ensure_device_capacity_(new_storage_req);
                 }
                 logical_size_ = new_size;
-                storage_size_ = new_storage_req; // Update tracked size, though h_data_ is empty
-                return; 
+                storage_size_ = new_storage_req;
+                return;
             }
 
-            // [Standard Modes 0, 1, 3]
-            if (is_mapped_ && DeviceEnv::instance().is_initialized()) {
-                cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-            }
-
+            // [Transfer Mode]: Handle Host Mirror
             unregister_mapping_();
-
             storage_size_ = new_storage_req;
 
-            if (is_mapped_) {
-                h_data_.resize(storage_size_);
-                refresh_mapped_pointer_();
-            } else {
-                if (storage_size_ > 0) ensure_device_capacity_(storage_size_);
-                h_data_.resize(storage_size_); // CPU Cost happens here
-            }
+            if (storage_size_ > 0) ensure_device_capacity_(storage_size_);
+            
+            // CPU Overhead occurs here
+            h_data_.resize(storage_size_); 
 
             logical_size_ = new_size;
             register_mapping_();
@@ -333,161 +249,128 @@ namespace GPU {
 
         void reserve(size_t n) override {
             size_t required_storage = align_len(n);
-            
-            // [MODE 2: Pure Device]
-            if (mode_ == 2) {
+
+            if (!use_host_mirror_) {
                 if (required_storage > capacity_) ensure_device_capacity_(required_storage);
                 return;
             }
 
-            const bool need_host = (required_storage > h_data_.capacity());
-            const bool need_dev  = (!is_mapped_ && required_storage > capacity_);
-
-            if (!need_host && !need_dev) return;
+            if (required_storage <= h_data_.capacity() && required_storage <= capacity_) return;
 
             unregister_mapping_();
-            if (need_host) h_data_.reserve(required_storage);
-            if (is_mapped_) refresh_mapped_pointer_();
-            else if (need_dev) ensure_device_capacity_(required_storage);
+            if (required_storage > h_data_.capacity()) h_data_.reserve(required_storage);
+            if (required_storage > capacity_) ensure_device_capacity_(required_storage);
             register_mapping_();
+        }
+
+        // =========================================================
+        // Copy From (Deep GPU-GPU Copy)
+        // =========================================================
+        void copy_from(IDeviceVector<T>* other) override {
+            if (!other) return;
+            this->resize(other->size());
+            if (this->size() == 0) return;
+
+            if (DeviceEnv::instance().is_initialized()) {
+                cudaMemcpyAsync(this->device_ptr(), other->device_ptr(), 
+                                this->size() * sizeof(T), cudaMemcpyDeviceToDevice, 
+                                DeviceEnv::instance().get_compute_stream());
+            } else {
+                cudaMemcpy(this->device_ptr(), other->device_ptr(), 
+                           this->size() * sizeof(T), cudaMemcpyDeviceToDevice);
+            }
         }
 
         // =========================================================
         // Data Transfer
         // =========================================================
-
         void update_device() override {
-            if (mode_ == 2) return; // No host data to copy from
-            if (storage_size_ == 0 || logical_size_ == 0) return;
-            if (is_mapped_) return;
-            
-            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-            cudaMemcpyAsync(d_ptr_, h_data_.data(), logical_size_ * sizeof(T), cudaMemcpyHostToDevice, stream);
+            if (!use_host_mirror_) return; // No host data
+            if (storage_size_ == 0) return;
+            cudaMemcpyAsync(d_ptr_, h_data_.data(), logical_size_ * sizeof(T), cudaMemcpyHostToDevice, DeviceEnv::instance().get_compute_stream());
         }
 
         void update_host() override {
-            if (mode_ == 2) return; // No host data to copy to
-            if (storage_size_ == 0 || logical_size_ == 0) return;
-
-            if (is_mapped_) {
-                if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-                return;
-            }
-
-            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-            cudaMemcpyAsync(h_data_.data(), d_ptr_, logical_size_ * sizeof(T), cudaMemcpyDeviceToHost, stream);
-            cudaStreamSynchronize(stream);
+            if (!use_host_mirror_) return; // No host buffer
+            if (storage_size_ == 0) return;
+            cudaStream_t s = DeviceEnv::instance().get_compute_stream();
+            cudaMemcpyAsync(h_data_.data(), d_ptr_, logical_size_ * sizeof(T), cudaMemcpyDeviceToHost, s);
+            cudaStreamSynchronize(s);
         }
 
         void update_device(size_t offset, size_t count) override {
-            if (mode_ == 2) return;
-            if (storage_size_ == 0 || count == 0) return;
-            if (is_mapped_) return;
-            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-            cudaMemcpyAsync(d_ptr_ + offset, h_data_.data() + offset, count * sizeof(T), cudaMemcpyHostToDevice, stream);
+            if (!use_host_mirror_) return;
+            cudaMemcpyAsync(d_ptr_ + offset, h_data_.data() + offset, count * sizeof(T), cudaMemcpyHostToDevice, DeviceEnv::instance().get_compute_stream());
         }
 
         void update_host(size_t offset, size_t count) override {
-            if (mode_ == 2) return;
-            if (storage_size_ == 0 || count == 0) return;
-            if (is_mapped_) {
-                if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-                return;
-            }
-            cudaMemcpy(h_data_.data() + offset, d_ptr_ + offset, count * sizeof(T), cudaMemcpyDeviceToHost);
+            if (!use_host_mirror_) return;
+            cudaStream_t s = DeviceEnv::instance().get_compute_stream();
+            cudaMemcpyAsync(h_data_.data() + offset, d_ptr_ + offset, count * sizeof(T), cudaMemcpyDeviceToHost, s);
+            cudaStreamSynchronize(s);
         }
 
         // =========================================================
-        // Fast Fill / Set
+        // Utils
         // =========================================================
-
         void fill_zero() override {
             if (storage_size_ == 0) return;
-
-            // [MODE 2] Skip host fill
-            if (mode_ != 2) {
-                if (is_mapped_) {
-                    if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-                    std::fill(h_data_.begin(), h_data_.end(), static_cast<T>(0));
-                    return;
-                }
+            if (use_host_mirror_) {
                 std::fill(h_data_.begin(), h_data_.begin() + logical_size_, static_cast<T>(0));
             }
-
-            // Device Fill (Always do this)
-            if (!DeviceEnv::instance().is_initialized()) throw std::runtime_error("DeviceEnv not initialized");
-            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-            cudaMemsetAsync(d_ptr_, 0, storage_size_ * sizeof(T), stream);
+            cudaMemsetAsync(d_ptr_, 0, storage_size_ * sizeof(T), DeviceEnv::instance().get_compute_stream());
         }
 
         void set_value(T val) override {
             if (storage_size_ == 0) return;
-
-            // [MODE 2] Skip host fill
-            if (mode_ != 2) {
-                if (is_mapped_) {
-                    if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
-                    std::fill(h_data_.begin(), h_data_.begin() + (ptrdiff_t)logical_size_, val);
-                    return;
-                }
+            if (use_host_mirror_) {
                 std::fill(h_data_.begin(), h_data_.begin() + (ptrdiff_t)logical_size_, val);
             }
+            cudaStream_t s = DeviceEnv::instance().get_compute_stream();
+            int block = 256;
+            int grid = std::min((size_t)(WARP_LENGTH * getNumSMs()), (logical_size_ + block - 1) / block);
+            set_value_kernel<T><<<grid, block, 0, s>>>(d_ptr_, val, logical_size_);
             
-            if (!DeviceEnv::instance().is_initialized()) throw std::runtime_error("DeviceEnv not initialized");
-            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-            
-            int block = VECTOR_LENGTH;
-            int grid  = std::min((size_t)(WARP_LENGTH * getNumSMs()), (logical_size_ + block - 1) / (size_t)block);
-            set_value_kernel<T><<<grid, block, 0, stream>>>(d_ptr_, val, logical_size_);
-            
-            // Zero Padding for safety
+            // Padding
             if (logical_size_ < storage_size_) {
-                const size_t pad_len = storage_size_ - logical_size_;
-                const size_t grid2 = std::min((size_t)(WARP_LENGTH * getNumSMs()), (pad_len + block - 1) / (size_t)block);
-                set_value_kernel<T><<<grid2, block, 0, stream>>>(d_ptr_ + logical_size_, static_cast<T>(0), pad_len);
+                size_t pad = storage_size_ - logical_size_;
+                int grid2 = std::min((size_t)(WARP_LENGTH * getNumSMs()), (pad + block - 1) / block);
+                set_value_kernel<T><<<grid2, block, 0, s>>>(d_ptr_ + logical_size_, static_cast<T>(0), pad);
             }
         }
 
-        // =========================================================
-        // Clone
-        // =========================================================
         IDeviceVector<T>* clone() override {
-            auto* new_vec = new DeviceVectorImpl<T, Alloc>(this->logical_size(), mode_); // Pass mode_
-
+            // [Fix] use this->size() which maps to logical_size_
+            auto* new_vec = new DeviceVectorImpl<T, Alloc>(this->size(), use_host_mirror_);
             if (this->size() > 0) {
-                if (is_mapped_) {
-                    // Mapped logic...
-                    if (DeviceEnv::instance().is_initialized()) cudaStreamSynchronize(DeviceEnv::instance().get_compute_stream());
+                cudaMemcpyAsync(new_vec->device_ptr(), this->d_ptr_, this->size() * sizeof(T), cudaMemcpyDeviceToDevice, DeviceEnv::instance().get_compute_stream());
+                // Also copy host mirror if exists
+                if (use_host_mirror_) {
                     std::copy(this->h_data_.begin(), this->h_data_.begin() + (ptrdiff_t)this->size(), new_vec->host_ptr());
-                } else {
-                    // Standard & Mode 2 logic (D2D copy)
-                    cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
-                    cudaMemcpyAsync(new_vec->device_ptr(), this->d_ptr_, this->size() * sizeof(T), cudaMemcpyDeviceToDevice, stream);
                 }
             }
             return new_vec;
         }
 
         // =========================================================
-        // Reductions (Unchanged - they use d_ptr_)
+        // Getters & Reductions
         // =========================================================
+        T* host_ptr() override { return use_host_mirror_ ? h_data_.data() : nullptr; }
+        T* device_ptr() override { return d_ptr_; }
+        
+        // [Fix] Implement logical_size() as required by Interface
+        size_t size() const override { return logical_size_; }
+        size_t logical_size() const override { return logical_size_; }
+        
+        size_t capacity() const override { return capacity_; }
+
         T sum_partial(size_t n) override { return reduce_impl_(0, n); }
         T min_partial(size_t n) override { return reduce_impl_(1, n); }
         T max_partial(size_t n) override { return reduce_impl_(2, n); }
         T sum() override { return reduce_impl_(0, this->size()); }
         T min() override { return reduce_impl_(1, this->size()); }
         T max() override { return reduce_impl_(2, this->size()); }
-
-        // =========================================================
-        // Getters
-        // =========================================================
-        T* host_ptr() override { return (mode_ == 2) ? nullptr : h_data_.data(); }
-        T* device_ptr() override { return d_ptr_; }
-        size_t size() const override { return logical_size_; }
-        size_t logical_size() const override { return logical_size_; }
-        size_t capacity() const override { return capacity_; }
     };
-
-} // namespace GPU
+} 
 
 #endif // DEVICE_VECTOR_CUH
