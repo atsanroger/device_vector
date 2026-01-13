@@ -90,3 +90,5 @@ foreach(source ${PROFILE_SOURCES})
     get_filename_component(name ${source} NAME_WE)
     ADD_FORTRAN_GPU_EXE(${name} ${source})
 endforeach()
+
+set_source_files_properties(tests/test_rk4_dv.F90 PROPERTIES COMPILE_OPTIONS "-acc;-cuda;-gpu=cc89;-O0")
