@@ -108,14 +108,10 @@ PROGRAM profile_resize
   ! [3] DeviceVector (Compute Mode)
   ! ==================================================================
   PRINT *, "Testing DeviceVector (Compute Mode)..."
-  ! 使用 create_vector (Mode 2: Pure Device)
   CALL vec%create_vector(N_SMALL)
   
   CALL SYSTEM_CLOCK(COUNT=c_start)
   DO i = 1, ITERATIONS
-    ! 這裡的 resize 會利用 Capacity 策略
-    ! 1. 變大到 N_LARGE 時，如果 Capacity 不夠才分配 (Async)
-    ! 2. 變小回 N_SMALL 時，完全不釋放記憶體 (Zero Overhead)
     CALL vec%resize(N_LARGE)
     CALL vec%resize(N_SMALL)
   END DO

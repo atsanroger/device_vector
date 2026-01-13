@@ -2,7 +2,6 @@ MODULE physics_kernels
     USE cudafor
     IMPLICIT NONE
 CONTAINS
-    ! [CUDA Kernel] 手寫的 CUDA Kernel，用於 CUDA Fortran 和 DeviceVector
     ATTRIBUTES(GLOBAL) SUBROUTINE physics_update_kernel(arr, n_val, dt)
         REAL(4), DEVICE :: arr(*)
         INTEGER(8), VALUE :: n_val
@@ -29,12 +28,10 @@ PROGRAM profile_kernel
     INTEGER :: i_iter, istat
     INTEGER, PARAMETER :: ITERATIONS = 10000 
 
-    ! 變數宣告
     REAL(4), ALLOCATABLE :: h_acc(:)        ! OpenACC 用 (Host Array)
     REAL(4), DEVICE, ALLOCATABLE :: d_raw(:) ! CUDA Fortran 用 (Device Array)
     TYPE(device_vector_r4_t) :: vec          ! DeviceVector 用
     
-    ! DeviceVector 指標轉換用
     REAL(4), DEVICE, POINTER :: d_ptr_fix(:) => NULL()
     TYPE(C_PTR) :: cptr
     
@@ -57,7 +54,6 @@ PROGRAM profile_kernel
     ALLOCATE(h_acc(N))
     !$acc enter data create(h_acc)
     
-    ! 初始化
     !$acc kernels present(h_acc)
     h_acc(:) = 0.0
     !$acc end kernels
@@ -66,7 +62,6 @@ PROGRAM profile_kernel
     CALL SYSTEM_CLOCK(COUNT=count_start, COUNT_RATE=count_rate)
     
     DO i_iter = 1, ITERATIONS
-        ! 這裡讓編譯器自動生成 Kernel，這是 OpenACC 的標準用法
         !$acc parallel loop present(h_acc)
         DO k = 1, N
             h_acc(k) = h_acc(k) + 0.01
@@ -87,7 +82,6 @@ PROGRAM profile_kernel
     PRINT *, "Running [2] Raw CUDA Fortran..."
     ALLOCATE(d_raw(N))
     
-    ! 使用 OpenACC 初始化 (確保公平)
     !$acc kernels deviceptr(d_raw)
     d_raw(:) = 0.0
     !$acc end kernels
@@ -96,7 +90,6 @@ PROGRAM profile_kernel
     CALL SYSTEM_CLOCK(COUNT=count_start)
     
     DO i_iter = 1, ITERATIONS
-        ! 呼叫手寫的 CUDA Kernel
         CALL physics_update_kernel<<<GRID_SIZE, BLOCK_SIZE>>>(d_raw, N, 0.01)
     END DO
     
@@ -112,11 +105,9 @@ PROGRAM profile_kernel
     PRINT *, "Running [3] DeviceVector..."
     CALL vec%create_vector(N)
     
-    ! 取得指標
     cptr = vec%device_ptr()
     CALL C_F_POINTER(cptr, d_ptr_fix, [N])
     
-    ! 初始化
     !$acc kernels deviceptr(d_ptr_fix)
     d_ptr_fix(:) = 0.0
     !$acc end kernels
@@ -125,7 +116,6 @@ PROGRAM profile_kernel
     CALL SYSTEM_CLOCK(COUNT=count_start)
     
     DO i_iter = 1, ITERATIONS
-        ! 傳入 DeviceVector 的指標給 CUDA Kernel
         CALL physics_update_kernel<<<GRID_SIZE, BLOCK_SIZE>>>(d_ptr_fix(1), N, 0.01)
     END DO
     

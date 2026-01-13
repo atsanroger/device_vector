@@ -10,7 +10,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES 86)
 
-# 全域 Fortran 編譯選項
 add_compile_options($<$<COMPILE_LANGUAGE:Fortran>:-cuda>)
 if(ENABLE_OPENACC)
   add_compile_options($<$<COMPILE_LANGUAGE:Fortran>:-acc>)
@@ -69,24 +68,18 @@ if(BUILD_TESTS)
     target_link_options(run_tests PRIVATE "-acc")
   endif()
 
-  # Dynamic Profiles: 自動抓取 profile 資料夾下的所有 .F90
   file(GLOB PROFILE_SOURCES "profile/*.F90")
   
   foreach(PROFILE_SRC ${PROFILE_SOURCES})
-    # 取得檔名 (不含路徑和副檔名)，例如 profile_memaccess
     get_filename_component(PROFILE_NAME ${PROFILE_SRC} NAME_WE)
     
-    # 建立執行檔 Target
     add_executable(${PROFILE_NAME} ${PROFILE_SRC})
     
-    # 連結必要的庫
     target_link_libraries(${PROFILE_NAME} PRIVATE gpu_interface CUDA::cudart)
     
-    # 設定編譯屬性和 RPATH
     set_target_properties(${PROFILE_NAME} PROPERTIES Fortran_FORMAT FREE LINK_FLAGS "-cuda")
     target_link_options(${PROFILE_NAME} PRIVATE "-Wl,-rpath,$<TARGET_FILE_DIR:CUDA::cudart>")
 
-    # 如果開啟 OpenACC，補上 flag
     if(ENABLE_OPENACC)
       target_link_options(${PROFILE_NAME} PRIVATE "-acc")
     endif()

@@ -6,17 +6,15 @@ PROGRAM profile_particles_soa
   IMPLICIT NONE
 
   ! ------------------------------------------------------------------
-  ! 測試參數
-  ! ------------------------------------------------------------------
   INTEGER(8), PARAMETER :: N_START   = 1000
-  INTEGER(8), PARAMETER :: N_END     = 5000000     ! 5M 粒子
-  INTEGER(8), PARAMETER :: STEP_SIZE = 50000       ! 每次增加 5萬
+  INTEGER(8), PARAMETER :: N_END     = 5000000     
+  INTEGER(8), PARAMETER :: STEP_SIZE = 50000       
   INTEGER(8), PARAMETER :: ITERATIONS = (N_END - N_START) / STEP_SIZE
   
   INTEGER, PARAMETER :: N_PROP = 6
 
   ! ------------------------------------------------------------------
-  ! [1] OpenACC 變數
+  ! [1] OpenACC 
   ! ------------------------------------------------------------------
   INTEGER(8), ALLOCATABLE :: h_id(:), h_id_tmp(:)
   INTEGER(4), ALLOCATABLE :: h_ijk(:), h_ijk_tmp(:)
@@ -28,7 +26,7 @@ PROGRAM profile_particles_soa
   INTEGER(8) :: cap_acc
 
   ! ------------------------------------------------------------------
-  ! [2] CUDA Fortran 變數
+  ! [2] CUDA Fortran 
   ! ------------------------------------------------------------------
   INTEGER(8), ALLOCATABLE, DEVICE, TARGET :: d_id(:), d_id_tmp(:)
   INTEGER(4), ALLOCATABLE, DEVICE, TARGET :: d_ijk(:), d_ijk_tmp(:)
@@ -52,15 +50,12 @@ PROGRAM profile_particles_soa
   END TYPE particle_soa_t
   TYPE(particle_soa_t) :: ptcl
   
-  ! 用於初始化的臨時 Buffer (因為 Compute Vector 不能直接寫入)
-  ! 我們需要不同型別的 Buffer 來對應不同欄位
   TYPE(device_vector_i8_t) :: init_buf_i8
   TYPE(device_vector_i4_t) :: init_buf_i4
   TYPE(device_vector_r4_t) :: init_buf_r4
   
-  INTEGER(8) :: cap_dv  ! 新增 DeviceVector 的容量追蹤
+  INTEGER(8) :: cap_dv  
 
-  ! 計時與輔助
   INTEGER(8) :: c_start, c_end, c_rate
   REAL(8)    :: t_acc, t_cf, t_dv
   INTEGER    :: i
@@ -82,7 +77,6 @@ PROGRAM profile_particles_soa
   ALLOCATE(h_id(cap_acc), h_ijk(cap_acc*3), h_xyz(cap_acc*3))
   ALLOCATE(h_prop(cap_acc*N_PROP), h_seed(cap_acc), h_alive(cap_acc))
   
-  ! 初始化資料 (公平起見)
   h_id = 1
   h_ijk = 0
   h_xyz = 0.0
@@ -153,7 +147,6 @@ PROGRAM profile_particles_soa
   ALLOCATE(d_id(cap_cf), d_ijk(cap_cf*3), d_xyz(cap_cf*3))
   ALLOCATE(d_prop(cap_cf*N_PROP), d_seed(cap_cf), d_alive(cap_cf))
   
-  ! 初始化 (Device Kernel or Assignment)
   d_id = 1
   d_ijk = 0
   d_xyz = 0.0
@@ -214,7 +207,6 @@ PROGRAM profile_particles_soa
   CALL ptcl%seed%create_vector(cap_dv)
   CALL ptcl%alive%create_vector(cap_dv)
   
-  ! 2. 初始化資料 (這也是標準流程：用 Buffer 傳輸，copy_from 給 Vector)
   ! (A) ID (Integer 8)
   CALL init_buf_i8%create_buffer(cap_dv)
   init_buf_i8%ptr(:) = 1_8
@@ -223,7 +215,7 @@ PROGRAM profile_particles_soa
   CALL init_buf_i8%free()
 
   ! (B) IJK, Seed, Alive (Integer 4)
-  CALL init_buf_i4%create_buffer(cap_dv * 3) ! 共用大小，反正只是初始化
+  CALL init_buf_i4%create_buffer(cap_dv * 3) 
   init_buf_i4%ptr(:) = 0
   CALL init_buf_i4%upload()
   CALL ptcl%ijk%copy_from(init_buf_i4)
@@ -264,7 +256,6 @@ PROGRAM profile_particles_soa
         new_cap = cap_dv + cap_dv / 2
         if (new_cap < current_n) new_cap = current_n * 1.5
         
-        ! 這裡呼叫 resize，底層是純 GPU 操作 (Async + Capacity)
         CALL ptcl%id%resize(new_cap)
         CALL ptcl%ijk%resize(new_cap * 3)
         CALL ptcl%xyz%resize(new_cap * 3)
