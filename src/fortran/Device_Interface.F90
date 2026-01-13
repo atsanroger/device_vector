@@ -4,17 +4,15 @@ MODULE Device_Vector
   IMPLICIT NONE
 
   PRIVATE 
-  
   PUBLIC :: device_vector_i4_t, device_vector_i8_t
   PUBLIC :: device_vector_r4_t, device_vector_r8_t
   PUBLIC :: device_env_init, device_env_finalize, device_synchronize
   PUBLIC :: vec_sort_i4
 
   ! ====================================================================
-  ! 1. C FUNCTION INTERFACES (完全展開，禁止省略)
+  ! 1. C FUNCTION INTERFACES (完全展開，絕無省略)
   ! ====================================================================
   INTERFACE
-    ! --- Global Env ---
     SUBROUTINE device_env_init(rank, gpus_per_node) BIND(C, name="device_env_init")
       IMPORT :: c_int; INTEGER(c_int), VALUE :: rank, gpus_per_node
     END SUBROUTINE
@@ -57,6 +55,12 @@ MODULE Device_Vector
     FUNCTION vec_sum_i4_c(h) RESULT(res) BIND(C, name="vec_sum_i4")
       IMPORT :: c_ptr, c_int; TYPE(c_ptr), VALUE :: h; INTEGER(c_int) :: res
     END FUNCTION
+    FUNCTION vec_min_i4_c(h) RESULT(res) BIND(C, name="vec_min_i4")
+      IMPORT :: c_ptr, c_int; TYPE(c_ptr), VALUE :: h; INTEGER(c_int) :: res
+    END FUNCTION
+    FUNCTION vec_max_i4_c(h) RESULT(res) BIND(C, name="vec_max_i4")
+      IMPORT :: c_ptr, c_int; TYPE(c_ptr), VALUE :: h; INTEGER(c_int) :: res
+    END FUNCTION
 
     ! --- INTEGER 8 ---
     FUNCTION vec_new_vector_i8_c(n) RESULT(res) BIND(C, name="vec_new_vector_i8")
@@ -90,6 +94,12 @@ MODULE Device_Vector
       IMPORT :: c_ptr; TYPE(c_ptr), VALUE :: h
     END SUBROUTINE
     FUNCTION vec_sum_i8_c(h) RESULT(res) BIND(C, name="vec_sum_i8")
+      IMPORT :: c_ptr, c_long_long; TYPE(c_ptr), VALUE :: h; INTEGER(c_long_long) :: res
+    END FUNCTION
+    FUNCTION vec_min_i8_c(h) RESULT(res) BIND(C, name="vec_min_i8")
+      IMPORT :: c_ptr, c_long_long; TYPE(c_ptr), VALUE :: h; INTEGER(c_long_long) :: res
+    END FUNCTION
+    FUNCTION vec_max_i8_c(h) RESULT(res) BIND(C, name="vec_max_i8")
       IMPORT :: c_ptr, c_long_long; TYPE(c_ptr), VALUE :: h; INTEGER(c_long_long) :: res
     END FUNCTION
 
@@ -127,6 +137,12 @@ MODULE Device_Vector
     FUNCTION vec_sum_r4_c(h) RESULT(res) BIND(C, name="vec_sum_r4")
       IMPORT :: c_ptr, c_float; TYPE(c_ptr), VALUE :: h; REAL(c_float) :: res
     END FUNCTION
+    FUNCTION vec_min_r4_c(h) RESULT(res) BIND(C, name="vec_min_r4")
+      IMPORT :: c_ptr, c_float; TYPE(c_ptr), VALUE :: h; REAL(c_float) :: res
+    END FUNCTION
+    FUNCTION vec_max_r4_c(h) RESULT(res) BIND(C, name="vec_max_r4")
+      IMPORT :: c_ptr, c_float; TYPE(c_ptr), VALUE :: h; REAL(c_float) :: res
+    END FUNCTION
 
     ! --- REAL 8 ---
     FUNCTION vec_new_vector_r8_c(n) RESULT(res) BIND(C, name="vec_new_vector_r8")
@@ -162,8 +178,13 @@ MODULE Device_Vector
     FUNCTION vec_sum_r8_c(h) RESULT(res) BIND(C, name="vec_sum_r8")
       IMPORT :: c_ptr, c_double; TYPE(c_ptr), VALUE :: h; REAL(c_double) :: res
     END FUNCTION
+    FUNCTION vec_min_r8_c(h) RESULT(res) BIND(C, name="vec_min_r8")
+      IMPORT :: c_ptr, c_double; TYPE(c_ptr), VALUE :: h; REAL(c_double) :: res
+    END FUNCTION
+    FUNCTION vec_max_r8_c(h) RESULT(res) BIND(C, name="vec_max_r8")
+      IMPORT :: c_ptr, c_double; TYPE(c_ptr), VALUE :: h; REAL(c_double) :: res
+    END FUNCTION
 
-    ! --- Sort ---
     SUBROUTINE vec_sort_pairs_i4_c(kin, kbuf, vin, vbuf, n) BIND(C, name="vec_sort_pairs_i4_c")
       IMPORT :: c_ptr, c_size_t
       TYPE(C_PTR), VALUE :: kin, kbuf, vin, vbuf; INTEGER(c_size_t), VALUE :: n
@@ -171,7 +192,7 @@ MODULE Device_Vector
   END INTERFACE
 
   ! ====================================================================
-  ! 2. TYPE DEFINITIONS (i4, i8, r4, r8)
+  ! 2. TYPE DEFINITIONS (完全展開)
   ! ====================================================================
 
   TYPE :: device_vector_i4_t
@@ -189,6 +210,8 @@ MODULE Device_Vector
       PROCEDURE :: download      => impl_download_i4
       PROCEDURE :: size          => impl_size_i4
       PROCEDURE :: sum           => impl_sum_i4
+      PROCEDURE :: min           => impl_min_i4
+      PROCEDURE :: max           => impl_max_i4
       PROCEDURE :: acc_map       => impl_acc_map_i4
       PROCEDURE :: acc_unmap     => impl_acc_unmap_i4
   END TYPE
@@ -208,6 +231,8 @@ MODULE Device_Vector
       PROCEDURE :: download      => impl_download_i8
       PROCEDURE :: size          => impl_size_i8
       PROCEDURE :: sum           => impl_sum_i8
+      PROCEDURE :: min           => impl_min_i8
+      PROCEDURE :: max           => impl_max_i8
       PROCEDURE :: acc_map       => impl_acc_map_i8
       PROCEDURE :: acc_unmap     => impl_acc_unmap_i8
   END TYPE
@@ -227,6 +252,8 @@ MODULE Device_Vector
       PROCEDURE :: download      => impl_download_r4
       PROCEDURE :: size          => impl_size_r4
       PROCEDURE :: sum           => impl_sum_r4
+      PROCEDURE :: min           => impl_min_r4
+      PROCEDURE :: max           => impl_max_r4
       PROCEDURE :: acc_map       => impl_acc_map_r4
       PROCEDURE :: acc_unmap     => impl_acc_unmap_r4
   END TYPE
@@ -246,6 +273,8 @@ MODULE Device_Vector
       PROCEDURE :: download      => impl_download_r8
       PROCEDURE :: size          => impl_size_r8
       PROCEDURE :: sum           => impl_sum_r8
+      PROCEDURE :: min           => impl_min_r8
+      PROCEDURE :: max           => impl_max_r8
       PROCEDURE :: acc_map       => impl_acc_map_r8
       PROCEDURE :: acc_unmap     => impl_acc_unmap_r8
   END TYPE
@@ -293,6 +322,12 @@ CONTAINS
   END FUNCTION
   INTEGER(4) FUNCTION impl_sum_i4(this)
     CLASS(device_vector_i4_t), INTENT(IN) :: this; impl_sum_i4 = vec_sum_i4_c(this%handle)
+  END FUNCTION
+  INTEGER(4) FUNCTION impl_min_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this; impl_min_i4 = vec_min_i4_c(this%handle)
+  END FUNCTION
+  INTEGER(4) FUNCTION impl_max_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this; impl_max_i4 = vec_max_i4_c(this%handle)
   END FUNCTION
   SUBROUTINE impl_acc_map_i4(this, p_opt)
     CLASS(device_vector_i4_t), INTENT(INOUT) :: this; INTEGER(4), POINTER, OPTIONAL, INTENT(OUT) :: p_opt(:)
@@ -349,6 +384,12 @@ CONTAINS
   INTEGER(8) FUNCTION impl_sum_i8(this)
     CLASS(device_vector_i8_t), INTENT(IN) :: this; impl_sum_i8 = vec_sum_i8_c(this%handle)
   END FUNCTION
+  INTEGER(8) FUNCTION impl_min_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this; impl_min_i8 = vec_min_i8_c(this%handle)
+  END FUNCTION
+  INTEGER(8) FUNCTION impl_max_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this; impl_max_i8 = vec_max_i8_c(this%handle)
+  END FUNCTION
   SUBROUTINE impl_acc_map_i8(this, p_opt)
     CLASS(device_vector_i8_t), INTENT(INOUT) :: this; INTEGER(8), POINTER, OPTIONAL, INTENT(OUT) :: p_opt(:)
     CALL vec_acc_map_i8(this%handle); IF(PRESENT(p_opt)) p_opt => this%ptr
@@ -404,6 +445,12 @@ CONTAINS
   REAL(4) FUNCTION impl_sum_r4(this)
     CLASS(device_vector_r4_t), INTENT(IN) :: this; impl_sum_r4 = vec_sum_r4_c(this%handle)
   END FUNCTION
+  REAL(4) FUNCTION impl_min_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this; impl_min_r4 = vec_min_r4_c(this%handle)
+  END FUNCTION
+  REAL(4) FUNCTION impl_max_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this; impl_max_r4 = vec_max_r4_c(this%handle)
+  END FUNCTION
   SUBROUTINE impl_acc_map_r4(this, p_opt)
     CLASS(device_vector_r4_t), INTENT(INOUT) :: this; REAL(4), POINTER, OPTIONAL, INTENT(OUT) :: p_opt(:)
     CALL vec_acc_map_r4(this%handle); IF(PRESENT(p_opt)) p_opt => this%ptr
@@ -458,6 +505,12 @@ CONTAINS
   END FUNCTION
   REAL(8) FUNCTION impl_sum_r8(this)
     CLASS(device_vector_r8_t), INTENT(IN) :: this; impl_sum_r8 = vec_sum_r8_c(this%handle)
+  END FUNCTION
+  REAL(8) FUNCTION impl_min_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this; impl_min_r8 = vec_min_r8_c(this%handle)
+  END FUNCTION
+  REAL(8) FUNCTION impl_max_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this; impl_max_r8 = vec_max_r8_c(this%handle)
   END FUNCTION
   SUBROUTINE impl_acc_map_r8(this, p_opt)
     CLASS(device_vector_r8_t), INTENT(INOUT) :: this; REAL(8), POINTER, OPTIONAL, INTENT(OUT) :: p_opt(:)
