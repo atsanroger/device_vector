@@ -10,7 +10,6 @@ PROGRAM profile_all
   REAL(4), DEVICE, ALLOCATABLE :: d_cf(:)
   TYPE(device_vector_r4_t) :: vec_dv
   
-  ! 局部指標：徹底解決 S-0519 與 S-0528
   REAL(4), DEVICE, POINTER :: d_ptr_dv(:)
   
   ! 運算暫存
@@ -34,7 +33,6 @@ PROGRAM profile_all
   DO i = 1, iterations
      !$acc enter data copyin(h_a)
      !$acc serial deviceptr(h_a)
-     ! 拆開寫，避免 S-0519
      tmp_val = h_a(1)
      h_a(1) = tmp_val + 1.0
      !$acc end serial
@@ -82,7 +80,7 @@ PROGRAM profile_all
      !$acc end serial
   END DO
   
-  istat = cudaDeviceSynchronize()
+  CALL device_synchronize()
   CALL SYSTEM_CLOCK(c_val)
   t2 = REAL(c_val) / REAL(c_rate)
   time_dv = t2 - t1

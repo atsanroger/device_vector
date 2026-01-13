@@ -614,17 +614,18 @@ CONTAINS
     CLASS(device_vector_i4_t), INTENT(INOUT) :: this
     INTEGER(8), INTENT(IN) :: n
     TYPE(c_ptr) :: raw_c_ptr
-    INTEGER(c_size_t) :: sz
+    !INTEGER(c_size_t) :: sz
 
     ! 1. Call C++ Resize
     CALL vec_resize_i4_c(this%handle, INT(n, c_size_t))
 
     ! 2. Auto-Sync Pointer
     raw_c_ptr = vec_host_i4_c(this%handle)
-    sz        = vec_size_i4_c(this%handle)
+    !sz        = vec_size_i4_c(this%handle)
     
-    IF (sz > 0) THEN
-      CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
+    IF (n > 0) THEN
+    !  CALL C_F_POINTER(raw_c_ptr, this%data, [sz])
+    CALL C_F_POINTER(raw_c_ptr, this%data, [n])
     ELSE
       NULLIFY(this%data)
     END IF
