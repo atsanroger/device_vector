@@ -1,40 +1,38 @@
+#ifndef DEVICE_ENV_CUH
+#define DEVICE_ENV_CUH
+
 #pragma once
 #include <cuda_runtime.h>
-#include <cstdio>
-#include <cstdlib>
 
 namespace GPU {
 
     class DeviceEnv {
     private:
-        int device_id_ = 0;
-        cudaStream_t compute_stream_ = nullptr;
-        cudaStream_t comm_stream_    = nullptr;
-        bool initialized_ = false;
-
-        DeviceEnv();
-        ~DeviceEnv();
+        // [修正] 補上這些變數，不然 .cu 檔找不到它們
+        bool initialized = false;
+        int device_id = 0;
+        cudaStream_t compute_stream = 0;
+        cudaStream_t transfer_stream = 0;
+        
+        DeviceEnv() = default;
 
     public:
-        static DeviceEnv& instance();
-
-        DeviceEnv(const DeviceEnv&)      = delete;
+        DeviceEnv(const DeviceEnv&) = delete;
         void operator=(const DeviceEnv&) = delete;
 
-        #ifdef USE_MPI
-            void init(int rank, int gpus_per_node = 1); 
-        #else
-            void init(int rank = 0, int gpus_per_node = 1); 
-        #endif
-        
+        static DeviceEnv& instance();
+
+        void init(int rank, int gpus_per_node);
         void finalize();
-
-        // Fail-fast helper: many components assume streams exist.
-        bool is_initialized() const { return initialized_; }
-
-        cudaStream_t get_compute_stream() const { return compute_stream_; }
-        cudaStream_t get_comm_stream() const { return comm_stream_; }
-        int get_device_id() const { return device_id_; }
+        
+        bool is_initialized() const { return initialized; }
+        int get_device_id() const { return device_id; }
+        
+        // [修正] 宣告這兩個函數
+        cudaStream_t get_compute_stream() const;
+        cudaStream_t get_transfer_stream() const;
     };
-    
-};
+
+}
+
+#endif

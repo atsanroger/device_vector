@@ -1,66 +1,71 @@
 #include "DeviceEnv.cuh"
+#include "DevicePtrManager.cuh"
+#include <mutex>
+#include <cuda_runtime.h>
 
 namespace GPU {
 
-    DeviceEnv::DeviceEnv() {}
-
-    DeviceEnv::~DeviceEnv() {
-        finalize(); 
-    }
-
+    // ==========================================
+    // DeviceEnv Implementation
+    // ==========================================
     DeviceEnv& DeviceEnv::instance() {
         static DeviceEnv inst;
         return inst;
     }
 
     void DeviceEnv::init(int rank, int gpus_per_node) {
-
-        // if single card, must set rank = 0!
-
-        if (initialized_) return; 
-
-        int actual_gpu_count = 0;
-        cudaError_t count_err = cudaGetDeviceCount(&actual_gpu_count);
-            
-        if (count_err != cudaSuccess || actual_gpu_count <= 0) {
-            fprintf(stderr, "[Error] No CUDA devices found or driver error!\n");
-            exit(EXIT_FAILURE);
-        }
-
-        this->device_id_ = rank % gpus_per_node;
-        cudaError_t err = cudaSetDevice(this->device_id_);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "[Error] Rank %d failed to set device %d: %s\n", 
-                    rank, device_id_, cudaGetErrorString(err));
-            exit(EXIT_FAILURE);
-        }
-
-        int priority_high, priority_low;
-        cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
-
-        cudaStreamCreateWithPriority(&compute_stream_, cudaStreamNonBlocking, 0);
-        cudaStreamCreateWithPriority(&comm_stream_,    cudaStreamNonBlocking, priority_low);
-
-        initialized_ = true;
+        if (initialized) return;
         
-        // printf("[DeviceEnv] Rank %d bound to GPU %d (Comm Stream Priority: %d)\n", 
-        //        rank, device_id_, priority_low);
-    };
-
-    void DeviceEnv::finalize() {
-        if (!initialized_) return; 
+        int device_count;
+        cudaGetDeviceCount(&device_count);
         
-        if (compute_stream_) {
-            cudaStreamSynchronize(compute_stream_);
-            cudaStreamDestroy(compute_stream_);
-            compute_stream_ = nullptr; 
+        if (gpus_per_node > 0) {
+            device_id = rank % gpus_per_node;
+        } else {
+            device_id = 0; 
         }
-        if (comm_stream_) {
-            cudaStreamSynchronize(comm_stream_);
-            cudaStreamDestroy(comm_stream_);
-            comm_stream_ = nullptr;
-        }
-        initialized_ = false;
+
+        if (device_id >= device_count) device_id = 0;
+        
+        cudaSetDevice(device_id);
+        
+        cudaStreamCreate(&compute_stream);
+        cudaStreamCreate(&transfer_stream);
+        
+        initialized = true;
     }
 
-};
+    void DeviceEnv::finalize() {
+        if (!initialized) return;
+        cudaStreamDestroy(compute_stream);
+        cudaStreamDestroy(transfer_stream);
+        initialized = false;
+    }
+
+    cudaStream_t DeviceEnv::get_compute_stream() const {
+        return compute_stream;
+    }
+
+    cudaStream_t DeviceEnv::get_transfer_stream() const {
+        return transfer_stream;
+    }
+
+    // ==========================================
+    // DevicePtrManager Implementation
+    // ==========================================
+    DevicePtrManager& DevicePtrManager::instance() {
+        static DevicePtrManager inst;
+        return inst;
+    }
+
+    void DevicePtrManager::register_ptr(void* host_ptr, void* device_ptr, size_t size) {
+        std::lock_guard<std::mutex> lock(mu);
+        ptr_map[host_ptr] = {device_ptr, size};
+    }
+
+    void DevicePtrManager::unregister_ptr(void* host_ptr) {
+        std::lock_guard<std::mutex> lock(mu);
+        ptr_map.erase(host_ptr);
+    }
+
+} // namespace GPU

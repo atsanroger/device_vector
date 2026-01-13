@@ -1,14 +1,14 @@
 PROGRAM profile_resize
   USE Device_Vector
-  USE cudafor
+  USE cudafor        ! 這裡需要編譯器開啟 -cuda
   USE iso_c_binding
-  USE openacc
+  USE openacc        ! 這裡需要編譯器開啟 -acc
   IMPLICIT NONE
 
   ! 參數設定
   INTEGER(8), PARAMETER :: N_SMALL = 1024 * 1024 * 10
   INTEGER(8), PARAMETER :: N_LARGE = 1024 * 1024 * 20
-  INTEGER, PARAMETER    :: ITERATIONS = 2000 
+  INTEGER, PARAMETER    :: ITERATIONS = 100  ! 建議先調小一點，測過再調大
 
   ! OpenACC Host Array
   REAL(4), ALLOCATABLE :: h_acc(:)
@@ -42,40 +42,33 @@ PROGRAM profile_resize
   CALL SYSTEM_CLOCK(COUNT=c_start, COUNT_RATE=c_rate)
   
   DO i = 1, ITERATIONS
-     ! OpenACC 沒有 realloc，必須:
-     ! 1. Exit Data (Device Free)
-     ! 2. Host Dealloc
-     ! 3. Host Alloc (New Size)
-     ! 4. Enter Data (Device Alloc)
-     
-     ! 變大
-     !$acc exit data delete(h_acc)
-     DEALLOCATE(h_acc)
-     ALLOCATE(h_acc(N_LARGE))
-     !$acc enter data create(h_acc)
-     
-     ! 簡單寫入觸發 page fault 避免 lazy allocation
-     !$acc kernels present(h_acc)
-     h_acc(1) = 1.0 
-     !$acc end kernels
-     
-     ! 變小
-     !$acc exit data delete(h_acc)
-     DEALLOCATE(h_acc)
-     ALLOCATE(h_acc(N_SMALL))
-     !$acc enter data create(h_acc)
-     
-     !$acc kernels present(h_acc)
-     h_acc(1) = 1.0
-     !$acc end kernels
+      !$acc exit data delete(h_acc)
+      DEALLOCATE(h_acc)
+      ALLOCATE(h_acc(N_LARGE))
+      !$acc enter data create(h_acc)
+      
+      !$acc kernels present(h_acc)
+      h_acc(1) = 1.0 
+      !$acc end kernels
+      
+      !$acc exit data delete(h_acc)
+      DEALLOCATE(h_acc)
+      ALLOCATE(h_acc(N_SMALL))
+      !$acc enter data create(h_acc)
+      
+      !$acc kernels present(h_acc)
+      h_acc(1) = 1.0
+      !$acc end kernels
   END DO
   
   CALL device_synchronize()
   CALL SYSTEM_CLOCK(COUNT=c_end)
   t_acc = REAL(c_end - c_start) / REAL(c_rate)
   
-  !$acc exit data delete(h_acc)
-  DEALLOCATE(h_acc)
+  IF (ALLOCATED(h_acc)) THEN
+      !$acc exit data delete(h_acc)
+      DEALLOCATE(h_acc)
+  END IF
 
   ! ==================================================================
   ! [2] CUDA Fortran (Manual Alloc/Dealloc)
@@ -87,22 +80,20 @@ PROGRAM profile_resize
   CALL SYSTEM_CLOCK(COUNT=c_start)
 
   DO i = 1, ITERATIONS
-     ! 模擬業務邏輯：變大 -> 變小
-     DEALLOCATE(d_cf)
-     ALLOCATE(d_cf(N_LARGE))
-     d_cf(1) = 1.0 
-     
-     DEALLOCATE(d_cf)
-     ALLOCATE(d_cf(N_SMALL))
-     d_cf(1) = 1.0
+      DEALLOCATE(d_cf)
+      ALLOCATE(d_cf(N_LARGE))
+      d_cf(1) = 1.0 
+      
+      DEALLOCATE(d_cf)
+      ALLOCATE(d_cf(N_SMALL))
+      d_cf(1) = 1.0
   END DO
   
   istat = cudaDeviceSynchronize()
   CALL SYSTEM_CLOCK(COUNT=c_end)
   
-  dummy_val = d_cf(1) 
   t_cf = REAL(c_end - c_start) / REAL(c_rate)
-  DEALLOCATE(d_cf)
+  IF (ALLOCATED(d_cf)) DEALLOCATE(d_cf)
 
   ! ==================================================================
   ! [3] DeviceVector (Compute Mode)
@@ -115,16 +106,17 @@ PROGRAM profile_resize
     CALL vec%resize(N_LARGE)
     CALL vec%resize(N_SMALL)
   END DO
-  istat = cudaDeviceSynchronize()
+  ! DeviceVector 內部是 C++，我們用我們寫好的同步
+  CALL device_synchronize()
   CALL SYSTEM_CLOCK(COUNT=c_end)
   t_dv_smart = REAL(c_end - c_start) / REAL(c_rate)
 
   CALL vec%free()
   CALL device_env_finalize()
 
-  ! Report
+  ! Report (略，維持原樣)
   PRINT *, "=========================================================="
-  PRINT *, "                 PERFORMANCE RESULTS                      "
+  PRINT *, "                   PERFORMANCE RESULTS                   "
   PRINT *, "=========================================================="
   PRINT '(A, F10.4, A)', " [1] OpenACC Total Time      : ", t_acc,      " s"
   PRINT '(A, F10.4, A)', " [2] CUDA Fortran Total Time : ", t_cf,       " s"
