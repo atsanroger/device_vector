@@ -4,30 +4,39 @@ PROGRAM test_reorder_dv_fixed
   USE iso_c_binding
   IMPLICIT NONE
 
-  ! 參數設定
-  INTEGER(8), PARAMETER :: N = 100_8 
-  INTEGER,    PARAMETER :: GX=1000, GY=1000, GZ=1000
-  INTEGER(8) :: n_cells
+! --- 變數宣告 ---
+  INTEGER(8) :: N, GX, GY, GZ, GXYZ
+  INTEGER    :: ios
 
-  ! 1. 粒子資料
+  ! --- 1. Namelist 定義 ---
+  NAMELIST /sim_config/ N, GX, GY, GZ
+
   TYPE(device_vector_r4_t) :: px, py, pz, tx, ty, tz
   REAL(4), POINTER :: ax(:), ay(:), az(:), atx(:), aty(:), atz(:)
 
-  ! 2. 排序 Buffer
   TYPE(device_vector_i4_t) :: dv_codes, dv_codes_buf
   TYPE(device_vector_i4_t) :: dv_ids,   dv_ids_buf
   INTEGER, POINTER :: codes(:), ids(:) 
 
-  ! 3. 網格 (Edge Finding 用)
   TYPE(device_vector_i4_t) :: dv_cell_ptr, dv_cell_cnt
   INTEGER, POINTER :: cell_ptr(:), cell_cnt(:)
 
-  ! 4. 驗證用 Host 變數 ★★★ 補上宣告 ★★★
   INTEGER, ALLOCATABLE :: h_codes(:)
-  INTEGER, ALLOCATABLE :: h_cell_cnt(:) ! <--- 之前漏了這個
+  INTEGER, ALLOCATABLE :: h_cell_cnt(:) 
   INTEGER(8) :: i, total_particles
-  INTEGER    :: non_empty_cells ! <--- 之前漏了這個
+  INTEGER    :: non_empty_cells 
   LOGICAL    :: is_sorted
+
+  OPEN(UNIT=10, FILE='../configs/test_reorder.nml', STATUS='OLD', IOSTAT=ios)
+   IF (ios == 0) THEN
+      READ(10, NML=sim_config)
+      CLOSE(10)
+      PRINT *, "[Init] Namelist Loaded: N =", N, " Grid =", GX, "x", GY, "x", GZ
+   ELSE
+      PRINT *, "[Init] Namelist not found, using defaults."
+   END IF
+
+  GXYZ = GX * GY * GZ
 
   CALL device_env_init(0, 1)
   PRINT *, "[Init] Creating DeviceVectors..."
