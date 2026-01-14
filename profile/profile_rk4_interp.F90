@@ -18,11 +18,14 @@ PROGRAM profile_rk4_dv
   REAL(4), POINTER, CONTIGUOUS :: ak1x(:), ak1y(:), ak1z(:), ak2x(:), ak2y(:), ak2z(:)
   REAL(4), POINTER, CONTIGUOUS :: ak3x(:), ak3y(:), ak3z(:), ak4x(:), ak4y(:), ak4z(:)
   REAL(4), ALLOCATABLE, TARGET :: f1d(:)
+
+  ! Reference
+  !REAL(4), ALLOCATABLE : ref_x(:), ref_y(:), ref_z(:)
   
   INTEGER(8) :: i_step, n, t1, t2, t_rate, off8
   REAL(4)    :: tx, ty, tz, fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
-  REAL(8)    :: t_dv, t_acc, t_dv2
-  INTEGER(8) :: ii,     jj, kk
+  REAL(8)    :: t_acc, t_dv, t_dv2, t_dv3, t_dv4
+  INTEGER(8) :: ii, jj, kk
 
   ! GPU Hardware constant
   INTEGER, PARAMETER :: WARP_LENGTH = 128
@@ -43,6 +46,8 @@ PROGRAM profile_rk4_dv
 
   PRINT *, "[Init] Generating Random Velocity Field..."
   ALLOCATE(f1d(GXYZ * 3))
+
+  !ALLOCATE(ref_x(N_P), ref_y(N_P), ref_z(N_P))
 
   CALL device_env_init(0, 1)
 
@@ -74,6 +79,25 @@ PROGRAM profile_rk4_dv
   t_acc = REAL(t2-t1,8)/REAL(t_rate,8)
   PRINT *, " [openACC] Total Time (Full Physics): ", t_acc, " s"
 
+  CALL SYSTEM_CLOCK(t1, t_rate)
+  CALL run_device_vector_ver3(f1d)
+  CALL SYSTEM_CLOCK(t2, t_rate)
+  CALL SYSTEM_CLOCK(t2)
+
+  t_dv3 = REAL(t2-t1,8)/REAL(t_rate,8)
+  PRINT *, " [DV Fusion] Total Time (Full Physics): ", t_dv3, " s"
+
+  CALL SYSTEM_CLOCK(t1, t_rate)
+  CALL run_device_vector_ver4(f1d)
+  CALL SYSTEM_CLOCK(t2, t_rate)
+  CALL SYSTEM_CLOCK(t2)
+
+  t_dv4 = REAL(t2-t1,8)/REAL(t_rate,8)
+  PRINT *, " [DV IA] Total Time (Full Physics): ", t_dv4, " s"
+
+  DEALLOCATE(f1d)
+  CALL device_env_finalize()
+
   ! ==================================================================
   ! Report
   ! ==================================================================
@@ -81,18 +105,19 @@ PROGRAM profile_rk4_dv
   PRINT *, "                 FINAL TRUE RESULTS                       "
   PRINT *, "=========================================================="
   PRINT '(A, F10.4, A)', " [1] OpenACC Time              : ", t_acc, " s"
-  PRINT '(A, F10.4, A)', " [2] DeviceVector Time         : ", t_dv,  " s"
-  PRINT '(A, F10.4, A)', " [3] DeviceVector_Improve Time : ", t_dv2, " s"
+  PRINT '(A, F10.4, A)', " [2] DeviceVector_Improve Time : ", t_dv2,  " s"
+  PRINT '(A, F10.4, A)', " [3] DeviceVector_Org Time     : ", t_dv, " s"
+  PRINT '(A, F10.4, A)', " [3] DeviceVector_Fusion Time  : ", t_dv3, " s"
+  PRINT '(A, F10.4, A)', " [3] DeviceVector_IA      Time : ", t_dv4, " s"
   PRINT *, "----------------------------------------------------------"
-  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs OpenACC): ", t_acc / t_dv2, " x"
-  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs DV_odd) : ", t_dv  / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs OpenACC):         ", t_acc / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs DV_odd) :         ", t_dv  / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_Fusion Time vs DV_improve) : ", t_dv3 / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_IA vs DV_improve) :          ", t_dv4 / t_dv2, " x"
   PRINT *, "=========================================================="
 
 CONTAINS
 
-  ! ---------------------------------------------------------
-  ! Main Subroutine: Device Vector Control
-  ! ---------------------------------------------------------
   SUBROUTINE run_device_vector_ver2(host_data)
 IMPLICIT NONE
     REAL(4), INTENT(IN) :: host_data(:)
@@ -101,14 +126,12 @@ IMPLICIT NONE
     INTEGER(8) :: i_step, n, off8, ii, jj, kk
     REAL(4) :: fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
     REAL(4) :: tx, ty, tz
-
-    CALL device_env_init(0, 1)
     
     ALLOCATE(f1d_local(SIZE(host_data)))
     f1d_local = host_data
     !$acc enter data copyin(f1d_local)
 
-    ! 建立 Buffer
+    ! Create Buffer
     CALL px%create_buffer(N_P);  CALL py%create_buffer(N_P);  CALL pz%create_buffer(N_P)
     CALL vx%create_buffer(N_P);  CALL vy%create_buffer(N_P);  CALL vz%create_buffer(N_P)
     CALL k1x%create_buffer(N_P); CALL k1y%create_buffer(N_P); CALL k1z%create_buffer(N_P)
@@ -116,7 +139,7 @@ IMPLICIT NONE
     CALL k3x%create_buffer(N_P); CALL k3y%create_buffer(N_P); CALL k3z%create_buffer(N_P)
     CALL k4x%create_buffer(N_P); CALL k4y%create_buffer(N_P); CALL k4z%create_buffer(N_P)
 
-    ! 映射指針
+    ! Mapping the pointer
     CALL px%acc_map(ax);    CALL py%acc_map(ay);    CALL pz%acc_map(az)
     CALL vx%acc_map(aux);   CALL vy%acc_map(auy);   CALL vz%acc_map(auz)
     CALL k1x%acc_map(ak1x); CALL k1y%acc_map(ak1y); CALL k1z%acc_map(ak1z)
@@ -124,7 +147,8 @@ IMPLICIT NONE
     CALL k3x%acc_map(ak3x); CALL k3y%acc_map(ak3y); CALL k3z%acc_map(ak3z)
     CALL k4x%acc_map(ak4x); CALL k4y%acc_map(ak4y); CALL k4z%acc_map(ak4z)
 
-    ! 初始化位置
+    ! Init
+
     !$acc parallel loop present(ax, ay, az, aux, auy, auz)
     DO n = 1, N_P
        ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
@@ -132,8 +156,7 @@ IMPLICIT NONE
     
     CALL device_synchronize() 
 
-    ! ★★★ 關鍵優化：Data Region Hoisting ★★★
-    ! 在迴圈外查一次表，迴圈內就不需要再查了，省去數千次 Overhead
+    ! ★★★ Data Region Hoisting ★★★
     !$acc data present(f1d_local, ax, ay, az) &
     !$acc      present(ak1x, ak1y, ak1z, ak2x, ak2y, ak2z) &
     !$acc      present(ak3x, ak3y, ak3z, ak4x, ak4y, ak4z)
@@ -141,7 +164,6 @@ IMPLICIT NONE
     DO i_step = 1, N_S
        
        ! --- Step 1: k1 ---
-       ! 注意：這裡移除了 present()，因為外面已經包了 data present
        !$acc parallel loop gang vector_length(WARP_LENGTH) &
        !$acc private(fx,fy,fz,ii,jj,kk,wx,wy,wz,off8,w00,w10,w0,w1)
        DO n = 1, N_P
@@ -246,11 +268,319 @@ IMPLICIT NONE
     
     !$acc exit data delete(f1d_local)
     DEALLOCATE(f1d_local)
-    CALL device_env_finalize()
   END SUBROUTINE run_device_vector_ver2
 
- SUBROUTINE run_device_vector()
-  IMPLICIT NONE
+SUBROUTINE run_device_vector_ver3(host_data)
+    IMPLICIT NONE
+    REAL(4), INTENT(IN) :: host_data(:)
+    REAL(4), ALLOCATABLE, TARGET :: f1d_local(:)
+    
+    INTEGER(8) :: i_step, n, ii, jj, kk, off8
+    REAL(4) :: curr_x, curr_y, curr_z
+    REAL(4) :: tmp_x, tmp_y, tmp_z ! 用於計算每一步的輸入位置
+    REAL(4) :: fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
+    REAL(4) :: tk1x, tk1y, tk1z, tk2x, tk2y, tk2z
+    REAL(4) :: tk3x, tk3y, tk3z, tk4x, tk4y, tk4z
+
+    ALLOCATE(f1d_local(SIZE(host_data)))
+    f1d_local = host_data
+    !$acc enter data copyin(f1d_local)
+
+    ! 只建立 P 和 V
+    CALL px%create_buffer(N_P);  CALL py%create_buffer(N_P);  CALL pz%create_buffer(N_P)
+    CALL vx%create_buffer(N_P);  CALL vy%create_buffer(N_P);  CALL vz%create_buffer(N_P)
+
+    CALL px%acc_map(ax);    CALL py%acc_map(ay);    CALL pz%acc_map(az)
+    CALL vx%acc_map(aux);   CALL vy%acc_map(auy);   CALL vz%acc_map(auz)
+
+    ! 初始化
+    !$acc parallel loop present(ax, ay, az, aux, auy, auz)
+    DO n = 1, N_P
+       ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
+    END DO
+    
+    CALL device_synchronize() 
+
+    !$acc data present(f1d_local, ax, ay, az)
+
+    DO i_step = 1, N_S
+       
+       !$acc parallel loop gang vector_length(WARP_LENGTH) &
+       !$acc private(curr_x, curr_y, curr_z, tmp_x, tmp_y, tmp_z) &
+       !$acc private(fx, fy, fz, ii, jj, kk, wx, wy, wz, off8, w00, w10, w0, w1) &
+       !$acc private(tk1x, tk1y, tk1z, tk2x, tk2y, tk2z) &
+       !$acc private(tk3x, tk3y, tk3z, tk4x, tk4y, tk4z)
+       DO n = 1, N_P
+          
+          ! Load Position
+          curr_x = ax(n); curr_y = ay(n); curr_z = az(n)
+
+          ! ================= Step 1: K1 =================
+          tmp_x = curr_x; tmp_y = curr_y; tmp_z = curr_z
+          
+          fx=tmp_x/DX; fy=tmp_y/DY; fz=tmp_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk1x=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk1y=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk1z=w0*(1.-wz)+w1*wz
+
+          ! ================= Step 2: K2 =================
+          tmp_x = curr_x + 0.5*DT*tk1x; tmp_y = curr_y + 0.5*DT*tk1y; tmp_z = curr_z + 0.5*DT*tk1z
+
+          fx=tmp_x/DX; fy=tmp_y/DY; fz=tmp_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk2x=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk2y=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk2z=w0*(1.-wz)+w1*wz
+
+          ! ================= Step 3: K3 =================
+          tmp_x = curr_x + 0.5*DT*tk2x; tmp_y = curr_y + 0.5*DT*tk2y; tmp_z = curr_z + 0.5*DT*tk2z
+
+          fx=tmp_x/DX; fy=tmp_y/DY; fz=tmp_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk3x=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk3y=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk3z=w0*(1.-wz)+w1*wz
+
+          ! ================= Step 4: K4 =================
+          tmp_x = curr_x + DT*tk3x; tmp_y = curr_y + DT*tk3y; tmp_z = curr_z + DT*tk3z
+
+          fx=tmp_x/DX; fy=tmp_y/DY; fz=tmp_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk4x=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk4y=w0*(1.-wz)+w1*wz
+          
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          tk4z=w0*(1.-wz)+w1*wz
+
+          ! ================= Final Update =================
+          ax(n) = curr_x + (DT/6.0_4) * (tk1x + 2.0*tk2x + 2.0*tk3x + tk4x)
+          ay(n) = curr_y + (DT/6.0_4) * (tk1y + 2.0*tk2y + 2.0*tk3y + tk4y)
+          az(n) = curr_z + (DT/6.0_4) * (tk1z + 2.0*tk2z + 2.0*tk3z + tk4z)
+          
+       END DO
+
+    END DO
+    !$acc end data
+
+    CALL device_synchronize()
+    
+    ! 清理
+    CALL px%acc_unmap(); CALL py%acc_unmap(); CALL pz%acc_unmap()
+    CALL vx%acc_unmap(); CALL vy%acc_unmap(); CALL vz%acc_unmap()
+
+    CALL px%free(); CALL py%free(); CALL pz%free()
+    CALL vx%free(); CALL vy%free(); CALL vz%free()
+    
+    !$acc exit data delete(f1d_local)
+    DEALLOCATE(f1d_local)
+  END SUBROUTINE run_device_vector_ver3
+
+! ---------------------------------------------------------
+  ! [Optimized Ver3] Low-Register Fusion (漸進累加法)
+  ! ---------------------------------------------------------
+  SUBROUTINE run_device_vector_ver4(host_data)
+    IMPLICIT NONE
+    REAL(4), INTENT(IN) :: host_data(:)
+    REAL(4), ALLOCATABLE, TARGET :: f1d_local(:)
+    
+    INTEGER(8) :: i_step, n, ii, jj, kk, off8
+    REAL(4) :: curr_x, curr_y, curr_z
+    REAL(4) :: start_x, start_y, start_z ! 紀錄起點
+    REAL(4) :: accum_x, accum_y, accum_z ! 漸進累加最終位移
+    REAL(4) :: k_x, k_y, k_z           ! 當前的 k，重複利用
+    REAL(4) :: fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
+
+    ALLOCATE(f1d_local(SIZE(host_data)))
+    f1d_local = host_data
+    !$acc enter data copyin(f1d_local)
+
+    CALL px%create_buffer(N_P);  CALL py%create_buffer(N_P);  CALL pz%create_buffer(N_P)
+    CALL vx%create_buffer(N_P);  CALL vy%create_buffer(N_P);  CALL vz%create_buffer(N_P)
+    CALL px%acc_map(ax);    CALL py%acc_map(ay);    CALL pz%acc_map(az)
+    CALL vx%acc_map(aux);   CALL vy%acc_map(auy);   CALL vz%acc_map(auz)
+
+    !$acc parallel loop present(ax, ay, az, aux, auy, auz)
+    DO n = 1, N_P
+       ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
+    END DO
+    CALL device_synchronize() 
+
+    !$acc data present(f1d_local, ax, ay, az)
+    DO i_step = 1, N_S
+       
+       !$acc parallel loop gang vector_length(WARP_LENGTH) &
+       !$acc private(curr_x, curr_y, curr_z, start_x, start_y, start_z) &
+       !$acc private(accum_x, accum_y, accum_z, k_x, k_y, k_z) &
+       !$acc private(fx, fy, fz, ii, jj, kk, wx, wy, wz, off8, w00, w10, w0, w1)
+       DO n = 1, N_P
+          
+          ! 1. 紀錄起點
+          start_x = ax(n); start_y = ay(n); start_z = az(n)
+          
+          ! 初始化累加器
+          accum_x = 0.0; accum_y = 0.0; accum_z = 0.0
+          
+          ! ================= Step 1: K1 =================
+          ! 輸入: start
+          curr_x = start_x; curr_y = start_y; curr_z = start_z
+
+          ! [Inline Interpolation]
+          fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_x=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_y=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_z=w0*(1.-wz)+w1*wz
+
+          ! ★ 累加 K1 (權重 1) 並準備下一步
+          accum_x = accum_x + k_x
+          accum_y = accum_y + k_y
+          accum_z = accum_z + k_z
+          
+          ! ================= Step 2: K2 =================
+          ! 輸入: start + 0.5*dt*k1
+          curr_x = start_x + 0.5*DT*k_x; curr_y = start_y + 0.5*DT*k_y; curr_z = start_z + 0.5*DT*k_z
+          
+          ! [Inline Interpolation]
+          fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_x=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_y=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_z=w0*(1.-wz)+w1*wz
+
+          ! ★ 累加 K2 (權重 2)
+          accum_x = accum_x + 2.0*k_x
+          accum_y = accum_y + 2.0*k_y
+          accum_z = accum_z + 2.0*k_z
+
+          ! ================= Step 3: K3 =================
+          ! 輸入: start + 0.5*dt*k2
+          curr_x = start_x + 0.5*DT*k_x; curr_y = start_y + 0.5*DT*k_y; curr_z = start_z + 0.5*DT*k_z
+
+          ! [Inline Interpolation]
+          fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_x=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_y=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_z=w0*(1.-wz)+w1*wz
+
+          ! ★ 累加 K3 (權重 2)
+          accum_x = accum_x + 2.0*k_x
+          accum_y = accum_y + 2.0*k_y
+          accum_z = accum_z + 2.0*k_z
+
+          ! ================= Step 4: K4 =================
+          ! 輸入: start + dt*k3
+          curr_x = start_x + DT*k_x; curr_y = start_y + DT*k_y; curr_z = start_z + DT*k_z
+
+          ! [Inline Interpolation]
+          fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+          IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+          wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+          off8=kk*GXY+jj*GX+ii+1_8
+          w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_x=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_y=w0*(1.-wz)+w1*wz
+          off8=off8+GXYZ; w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx; w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
+          w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx; w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
+          k_z=w0*(1.-wz)+w1*wz
+
+          ! ★ 累加 K4 (權重 1)
+          accum_x = accum_x + k_x
+          accum_y = accum_y + k_y
+          accum_z = accum_z + k_z
+
+          ! ================= Final Update =================
+          ax(n) = start_x + (DT/6.0_4) * accum_x
+          ay(n) = start_y + (DT/6.0_4) * accum_y
+          az(n) = start_z + (DT/6.0_4) * accum_z
+          
+       END DO
+    END DO
+    !$acc end data
+
+    CALL device_synchronize()
+    
+    CALL px%acc_unmap(); CALL py%acc_unmap(); CALL pz%acc_unmap()
+    CALL vx%acc_unmap(); CALL vy%acc_unmap(); CALL vz%acc_unmap()
+    CALL px%free(); CALL py%free(); CALL pz%free()
+    CALL vx%free(); CALL vy%free(); CALL vz%free()
+    
+    !$acc exit data delete(f1d_local)
+    DEALLOCATE(f1d_local)
+  END SUBROUTINE run_device_vector_ver4
+
+  SUBROUTINE run_device_vector()
+   IMPLICIT NONE
 
   !ALLOCATE(f1d(GXYZ * 3)); f1d = 0.1_4
   !!$acc enter data copyin(f1d)
@@ -431,9 +761,6 @@ IMPLICIT NONE
    REAL(4)    :: tx, ty, tz, fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
    INTEGER(8) :: ii, jj, kk
 
-   PRINT *, "----------------------------------------------------------"
-   PRINT *, "[Bench] Starting Raw OpenACC (Baseline - Full Physics)..."
-
    ALLOCATE(ax(N_P), ay(N_P), az(N_P))
    ALLOCATE(k1x(N_P), k1y(N_P), k1z(N_P), k2x(N_P), k2y(N_P), k2z(N_P))
    ALLOCATE(k3x(N_P), k3y(N_P), k3z(N_P), k4x(N_P), k4y(N_P), k4z(N_P))
@@ -602,7 +929,9 @@ IMPLICIT NONE
    CALL device_synchronize()
 
    !$acc exit data delete(ax, ay, az, f1d, k1x, k1y, k1z, k2x, k2y, k2z, k3x, k3y, k3z, k4x, k4y, k4z)
-   DEALLOCATE(ax, ay, az, f1d, k1x, k1y, k1z, k2x, k2y, k2z, k3x, k3y, k3z, k4x, k4y, k4z)
+   !DEALLOCATE(ax, ay, az, f1d, k1x, k1y, k1z, k2x, k2y, k2z, k3x, k3y, k3z, k4x, k4y, k4z)
+   DEALLOCATE(ax, ay, az, k1x, k1y, k1z, k2x, k2y, k2z, k3x, k3y, k3z, k4x, k4y, k4z)
+
    END SUBROUTINE
 
 END PROGRAM
