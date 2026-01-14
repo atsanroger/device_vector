@@ -3,29 +3,33 @@ PROGRAM test_rk4_dv
   USE openacc
   IMPLICIT NONE
 
-  ! 維度設定
-  INTEGER, PARAMETER :: GX = 64, GY = 64, GZ = 64
-  INTEGER(8), PARAMETER :: GXY = 64_8 * 64_8
-  INTEGER(8), PARAMETER :: GXYZ = 64_8 * 64_8 * 64_8
-  REAL(4), PARAMETER :: DX = 1.0, DY = 1.0, DZ = 1.0
-  REAL(4), PARAMETER :: DT = 0.01_4
+  INTEGER(8) :: N_P, N_S
+  REAL(4)    :: DT, DX, DY, DZ
+  INTEGER(8) :: GX, GY, GZ, GXY, GXYZ
+  INTEGER    :: ios
+  
+  NAMELIST /sim_config/ N_P, N_S, DT, DX, DY, DZ, GX, GY, GZ
 
-  INTEGER(8), PARAMETER :: N_P = 1000000_8
-  INTEGER,    PARAMETER :: N_S = 100 
-
-  ! Device Vector 容器
   TYPE(device_vector_r4_t) :: px, py, pz, vx, vy, vz
   REAL(4), POINTER :: ax(:), ay(:), az(:), aux(:), auy(:), auz(:)
   
-  ! ★ 關鍵：將場改為一維陣列，徹底消除維度計算壓力
   REAL(4), ALLOCATABLE, TARGET :: field_1d(:)
   INTEGER(8) :: i_step, n, c1, c2, cr, idx8
   REAL(8)    :: time_total
 
-  ! 私有變數
   REAL(4) :: cx, cy, cz, cu, cv, cw, tx, ty, tz, kx, ky, kz
   REAL(4) :: fx, fy, fz, wx, wy, wz, c00, c10, c01, c11, c0, c1
   INTEGER(8) :: i, j, k
+
+   PRINT *, "[Init] Reading input.nml..."
+   OPEN(UNIT=10, FILE='../configs/test_rk4.nml', STATUS='OLD', IOSTAT=ios)
+   IF (ios == 0) THEN
+      READ(10, NML=sim_config)
+      CLOSE(10)
+      PRINT *, "[Config] Parameters loaded successfully."
+   ELSE
+      PRINT *, "[Config] input.nml not found, exit"
+   END IF
 
   CALL device_env_init(0, 1)
 

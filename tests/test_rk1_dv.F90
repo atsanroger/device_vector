@@ -46,7 +46,7 @@ PROGRAM test_rk4_dv
      ax(p_idx)=0.5; ay(p_idx)=0.5; az(p_idx)=0.5; aux(p_idx)=0.0; auy(p_idx)=0.0; auz(p_idx)=0.0
   END DO
 
-  PRINT *, "[Run] Forcing Stable RK4 Implementation..."
+  PRINT *, "[Run] Forcing Stable RK1 Implementation..."
   CALL device_synchronize()
   CALL SYSTEM_CLOCK(tick1, tick_rate)
 
