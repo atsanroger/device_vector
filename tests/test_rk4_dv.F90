@@ -211,10 +211,14 @@ PROGRAM test_rk4_dv
   ! 清理
   CALL px%acc_unmap(); CALL py%acc_unmap(); CALL pz%acc_unmap()
   CALL k1x%acc_unmap(); CALL k2x%acc_unmap(); CALL k3x%acc_unmap(); CALL k4x%acc_unmap()
-  ! (其餘分量 unmap ... )
+  CALL k1y%acc_unmap(); CALL k2y%acc_unmap(); CALL k3y%acc_unmap(); CALL k4y%acc_unmap()
+  CALL k1z%acc_unmap(); CALL k2z%acc_unmap(); CALL k3z%acc_unmap(); CALL k4z%acc_unmap()
   
   CALL px%free(); CALL py%free(); CALL pz%free()
   CALL k1x%free(); CALL k2x%free(); CALL k3x%free(); CALL k4x%free()
+  CALL k1y%free(); CALL k2y%free(); CALL k3y%free(); CALL k4y%free()
+  CALL k1z%free(); CALL k2z%free(); CALL k3z%free(); CALL k4z%free()
+
   !$acc exit data delete(f1d)
   CALL device_env_finalize()
 END PROGRAM
