@@ -85,7 +85,7 @@ PROGRAM profile_rk4_dv
   PRINT '(A, F10.4, A)', " [3] DeviceVector_Improve Time : ", t_dv2, " s"
   PRINT *, "----------------------------------------------------------"
   PRINT '(A, F10.2, A)', " Speedup (DV_improve vs OpenACC): ", t_acc / t_dv2, " x"
-  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs DV_odd) : ", t_dv / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs DV_odd) : ", t_dv  / t_dv2, " x"
   PRINT *, "=========================================================="
 
 CONTAINS
