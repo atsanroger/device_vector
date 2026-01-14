@@ -80,12 +80,12 @@ PROGRAM profile_rk4_dv
   PRINT *, "=========================================================="
   PRINT *, "                 FINAL TRUE RESULTS                       "
   PRINT *, "=========================================================="
-  PRINT '(A, F10.4, A)', " [1] OpenACC Time           : ", t_acc, " s"
-  PRINT '(A, F10.4, A)', " [2] DeviceVector Time      : ", t_dv,  " s"
-  PRINT '(A, F10.4, A)', " [3] DeviceVector_Ver2 Time : ", t_dv2, " s"
+  PRINT '(A, F10.4, A)', " [1] OpenACC Time              : ", t_acc, " s"
+  PRINT '(A, F10.4, A)', " [2] DeviceVector Time         : ", t_dv,  " s"
+  PRINT '(A, F10.4, A)', " [3] DeviceVector_Improve Time : ", t_dv2, " s"
   PRINT *, "----------------------------------------------------------"
-  PRINT '(A, F10.2, A)', " Speedup (DV vs OpenACC): ", t_acc / t_dv, " x"
-  PRINT '(A, F10.2, A)', " Speedup (DV vs DV2)    : ", t_dv2 / t_dv, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs OpenACC): ", t_acc / t_dv2, " x"
+  PRINT '(A, F10.2, A)', " Speedup (DV_improve vs DV_odd) : ", t_dv / t_dv2, " x"
   PRINT *, "=========================================================="
 
 CONTAINS
