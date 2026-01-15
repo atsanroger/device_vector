@@ -1,0 +1,37 @@
+! ============================================================================
+  ! Random Number Generators (XORShift + Box-Muller)
+  ! File: rand.int
+  ! ============================================================================
+
+!$acc routine seq
+FUNCTION urand(seed) RESULT(val)
+    INTEGER, INTENT(INOUT) :: seed
+    REAL(4) :: val
+    
+    IF (seed == 0) seed = 123456789
+
+    ! XORShift32
+    seed = IEOR(seed, ISHFT(seed, 13))
+    seed = IEOR(seed, ISHFT(seed, -17))
+    seed = IEOR(seed, ISHFT(seed, 5))
+
+    val = 0.5_4 + REAL(seed, 4) * 2.3283064E-10_4
+END FUNCTION urand
+
+!$acc routine seq
+FUNCTION nrand(seed) RESULT(z)
+    INTEGER, INTENT(INOUT) :: seed
+    REAL(4) :: z
+    REAL(4) :: u1, u2, r, theta
+
+    u1 = urand(seed)
+    u2 = urand(seed)
+
+    IF (u1 < TINY_4) u1 = TINY_4
+
+    ! Box-Muller Transform
+    r     = SQRT(-2.0_4 * LOG(u1))
+    theta = 2.0_4 * PI_4 * u2
+    
+    z = r * COS(theta)
+END FUNCTION nrand
