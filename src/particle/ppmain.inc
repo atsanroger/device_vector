@@ -11,28 +11,45 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     REAL(4), INTENT(IN) :: dispv_in(0:ni+1, 0:nj+1, 0:nk+1)
     REAL(4), INTENT(IN) :: dispt_in(0:ni+1, 0:nj+1, 0:nk+1)
     INTEGER(1), INTENT(IN) :: rmvmask_in(ni, nj)
-    INTEGER, INTENT(IN) :: ni, nj, nk, n_steps
 
+    REAL(4), INTENT(IN) :: zlev_in(nk)           
+    REAL(4), INTENT(IN) :: mld_in(ni, nj)        
+    REAL(4), INTENT(IN) :: props_in(n_props, N_P) 
+    INTEGER(1), INTENT(IN) :: alive_in(N_P)      
+    
+    INTEGER, INTENT(IN) :: ni, nj, nk, n_steps, n_props
+    INTEGER, INTENT(IN) :: idx_age, idx_zmin, idx_zmax, idx_uvexp2, idx_uvexp10
+    INTEGER, INTENT(IN) :: idx_ml_ages, idx_ml_aged, idx_sfc_ages, idx_sfc_aged
     ! --- Device Vectors (GPU 物件) ---
-    ! 1. 流場
+    ! 1. 流場 (已存在)
     TYPE(device_vector_r4_t) :: dv_f1d
     REAL(4), POINTER, CONTIGUOUS :: pf1d(:)
 
-    ! 2. 輔助陣列 (擴散 & Mask)
+    ! 2. 輔助陣列 (已存在)
     TYPE(device_vector_r4_t) :: dv_disph, dv_dispv, dv_dispt, dv_rmvmask
     REAL(4), POINTER, CONTIGUOUS :: p_disph(:), p_dispv(:), p_dispt(:), p_rmvmask(:)    
     
+    ! 【新增】3. 環境與屬性 Device Vectors
+    TYPE(device_vector_r4_t) :: dv_zlev, dv_mld, dv_props
+    TYPE(device_vector_i1_t) :: dv_alive
     
-    ! 3. PARTICLE
-    TYPE(device_vector_r4_t) :: px, py, pz, vx, vy, vz
-    REAL(4), POINTER, CONTIGUOUS :: ax(:), ay(:), az(:), aux(:), auy(:), auz(:)
+    REAL(4), POINTER, CONTIGUOUS :: p_zlev(:), p_mld(:), p_props(:)
+    INTEGER(1), POINTER, CONTIGUOUS :: p_alive(:)
+    
+    ! 4. PARTICLE 位置 (已存在)
+    TYPE(device_vector_r4_t) :: px, py, pz
+    REAL(4), POINTER, CONTIGUOUS :: ax(:), ay(:), az(:)
     
     ! --- 雜項 ---
-    INTEGER(8) :: i_step, n, sz_field, sz_grid_3d, sz_mask_2d, idx_1d
-    INTEGER :: i, j, k    
+    INTEGER(8) :: n, idx_1d, prop_offset
+    INTEGER :: i, j, k, ip, jp, kp
+    REAL(4) :: xpos, ypos, zpos, xpos_rel, ypos_rel, zpos_rel
+    REAL(4) :: z_phys, mld_val
+    REAL(4) :: z_term, val_grid_z, days_inc
 
     ! RK4 TEMP
     REAL(4) :: xpos, ypos, zpos
+    REAL(4) :: xpos_rel, ypos_rel, zpos_rel
     REAL(4) :: start_x, start_y, start_z
     REAL(4) :: tk1x, tk1y, tk1z, tk2x, tk2y, tk2z
     REAL(4) :: tk3x, tk3y, tk3z, tk4x, tk4y, tk4z
@@ -44,6 +61,14 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     REAL(4) :: d_val, idx_n, idx_p, idy_n, idy_p
     REAL(4) :: val_dz, val_idx_now, val_idx_nxt, val_idx_prv, val_ref
     LOGICAL :: i_chg, j_chg
+
+    ! --- 擴散與隨機數專用變數 ---
+    INTEGER :: n_sub, m_steps, nsplit_local
+    INTEGER :: my_seed !
+    INTEGER(8) :: sz_layer, idx_base, idx_k, idx_km1, idx_kp1
+    REAL(4) :: kt(0:2), kt_max, f_step, dtsplit
+    REAL(4) :: val_k, val_km1, val_kp1, term_bot, term_top
+    REAL(4) :: idx0_sq, term_diff, rnd_val
 
     ! --- (A) 建立與載入流場 (f1d) ---
     sz_field = SIZE(host_data)
@@ -97,6 +122,34 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     CALL vy%create_buffer(N_P); CALL vy%acc_map(auy)
     CALL vz%create_buffer(N_P); CALL vz%acc_map(auz)
 
+    ! --- (E) 載入 Zlev (1D) ---
+    CALL dv_zlev%create_buffer(nk)
+    CALL dv_zlev%acc_map(p_zlev)
+    !$acc parallel loop present(p_zlev) copyin(zlev_in)
+    DO k = 1, nk
+       p_zlev(k) = zlev_in(k)
+    END DO
+
+    ! --- (F) 載入 MLD (2D -> 1D) ---
+    CALL dv_mld%create_buffer(ni * nj)
+    CALL dv_mld%acc_map(p_mld)
+    !$acc parallel loop collapse(2) present(p_mld) copyin(mld_in)
+    DO j = 1, nj
+       DO i = 1, ni
+          idx_1d = (j-1)*ni + i
+          p_mld(idx_1d) = mld_in(i,j)
+       END DO
+    END DO
+
+    ! --- (G) 載入 Properties (2D -> 1D Flattened) ---
+    ! 假設 props 是 (n_props, N_P)
+    CALL dv_props%create_buffer(SIZE(props_in))
+    CALL dv_props%acc_map(p_props)
+    !$acc parallel loop present(p_props) copyin(props_in)
+    DO n = 1, SIZE(props_in)
+       p_props(n) = props_in(n, 1)
+    END DO
+
     ! 3. 初始化粒子
     !$acc parallel loop present(ax, ay, az, aux, auy, auz)
     DO n = 1, N_P
@@ -114,7 +167,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
         !$acc private(tk1x, tk1y, tk1z, tk2x, tk2y, tk2z) &
         !$acc private(tk3x, tk3y, tk3z, tk4x, tk4y, tk4z)
         DO n = 1, N_P
-            
+            IF (p_alive(n) == 0_1) CYCLE
             ! ================= RK4 START =================
             ! 1. 紀錄起點
             start_x = ax(n); start_y = ay(n); start_z = az(n)
@@ -292,14 +345,87 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ypos = start_y + (DT/6.0_4)*(tk1y+2.*tk2y+2.*tk3y+tk4y)
             zpos = start_z + (DT/6.0_4)*(tk1z+2.*tk2z+2.*tk3z+tk4z)            ! ================= RK4 END =================
 
-            ip = INT(xpos/DX); jp = INT(ypos/DY); kp = INT(zpos/DZ)
+            ip = INT(xpos/DX)
+            jp = INT(ypos/DY)
+            kp = INT(zpos/DZ)
+
+            xpos_rel = (xpos / DX) - REAL(ip, 4)
+            ypos_rel = (ypos / DY) - REAL(jp, 4)
+            zpos_rel = (zpos / DZ) - REAL(kp, 4)
+
             m_curr = mask_packed(ip, jp, kp)
 
+            IF (BTEST(m_curr, 7)) THEN 
+               
+               nsplit_local = 5 
+               dtsplit = DT / REAL(nsplit_local, 4)
+               n_sub = 0
+               
+               sz_layer = (ni + 2) * (nj + 2)
+               idx_base = jp * (ni + 2) + ip + 1  ! 基礎平面偏移
+
+               my_seed = IEOR(INT(n, 4), INT(i_step, 4) * 1664525)
+               IF (my_seed == 0) my_seed = 123456789
+
+               DO WHILE (n_sub < nsplit_local)
+                  
+                  idx_k   = kp * sz_layer + idx_base
+                  idx_km1 = (kp-1) * sz_layer + idx_base
+                  idx_kp1 = (kp+1) * sz_layer + idx_base
+                  
+                  val_k   = p_dispt(idx_k)
+                  val_km1 = p_dispt(idx_km1)
+                  val_kp1 = p_dispt(idx_kp1)
+                  
+                  !    Bit 5: -Z (wmask(k-1)), Bit 4: +Z (wmask(k))
+                  term_bot = MERGE(1.0_4, 0.0_4, BTEST(m_curr, 5))
+                  term_top = MERGE(1.0_4, 0.0_4, BTEST(m_curr, 4))
+                  
+                  idx0_sq = idz0(kp)**2
+                  
+                  kt(0) = 0.5_4 * term_bot * (val_k + val_km1) * dtsplit * idx0_sq
+                  kt(1) =         val_k                        * dtsplit * idx0_sq
+                  kt(2) = 0.5_4 * term_top * (val_k + val_kp1) * dtsplit * idx0_sq
+
+                  kt_max = max(kt(0), kt(1), kt(2))
+                  IF (kt_max <= 1.0E-6_4) THEN
+                     m_steps = nsplit_local
+                  ELSE
+                     m_steps = INT(0.01_4 / kt_max)
+                  END IF
+                  m_steps = max(min(m_steps, nsplit_local - n_sub), 1)
+                  
+                  f_step = REAL(m_steps, 4)
+                  kt(0) = kt(0) * f_step
+                  kt(2) = kt(2) * f_step
+                  
+                  rnd_val = nrand(my_seed)  
+
+                  term_diff = sqrt(2.0_4 * max((1.0_4 - zpos_rel)*kt(0) + zpos_rel*kt(2), 0.0_4))
+                  
+                  zpos_rel = zpos_rel + rnd_val * term_diff
+                  zpos_rel = zpos_rel + (kt(2) - kt(0))
+                  
+                  val_dz      = dz(kp)
+                  val_idx_now = idz0(kp)
+                  val_idx_nxt = idz0(kp+1)
+                  val_idx_prv = idz0(kp-1)
+                  val_ref     = dz_ref(ip, jp, kp)
+
+                  CALL cross_z_branchless(kp, zpos_rel, m_curr, val_dz, val_idx_now, &
+                                          val_idx_nxt, val_idx_prv, val_ref, &
+                                          reflc_sfc, reflc_btm, repul_sfc, repul_btm)
+                                          
+                  n_sub = n_sub + m_steps
+                  
+               END DO
+            END IF
+
             ! --- X Check ---
-            IF (xpos >= REAL(GX-1,4) .OR. xpos < 0.0_4) THEN
+            IF (xpos_rel >= 1.0_4 .OR. xpos_rel < 0.0_4) THEN
               d_val = dx(ip, jp)
               idx_n = idx0(ip+1, jp); idx_p = idx0(ip-1, jp)
-              CALL cross_x_branchless(ip, xpos, m_curr, d_val, idx_n, idx_p, reflc, repul)
+              CALL cross_x_branchless(ip, xpos_rel, m_curr, d_val, idx_n, idx_p, reflc, repul)
               i_chg = .TRUE.
             ELSE
               i_chg = .FALSE.
@@ -307,31 +433,101 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
 
             ! --- Y Check ---
             IF (i_chg) m_curr = mask_packed(ip, jp, kp)
-            IF (ypos >= REAL(GY-1,4) .OR. ypos < 0.0_4) THEN
+            IF (ypos_rel >= 1.0_4 .OR. ypos_rel < 0.0_4) THEN
               d_val = dy(ip, jp)
               idy_n = idy0(ip, jp+1); idy_p = idy0(ip, jp-1)
-              CALL cross_y_branchless(jp, ypos, m_curr, d_val, idy_n, idy_p, reflc, repul)
+              CALL cross_y_branchless(jp, ypos_rel, m_curr, d_val, idy_n, idy_p, reflc, repul)
               j_chg = .TRUE.
             ELSE
               j_chg = .FALSE.
             END IF
 
-            IF (zpos >= 1.0_4 .OR. zpos < 0.0_4) THEN
+            ! --- Z Check ---
+            IF (j_chg) m_curr = mask_packed(ip, jp, kp)
+            IF (zpos_rel >= 1.0_4 .OR. zpos_rel < 0.0_4) THEN
                 val_dz      = dz(kp)
                 val_idx_now = idz0(kp)
                 val_idx_nxt = idz0(kp+1)
                 val_idx_prv = idz0(kp-1)
                 val_ref     = dz_ref(ip, jp, kp) !
             
-                CALL cross_z_branchless(kp, zpos, m_curr, val_dz, val_idx_now, &
+                CALL cross_z_branchless(kp, zpos_rel, m_curr, val_dz, val_idx_now, &
                                         val_idx_nxt, val_idx_prv, val_ref, &
                                         reflc_sfc, reflc_btm, repul_sfc, repul_btm)
 
             END IF
 
-            ax(n) = xpos
-            ay(n) = ypos
-            az(n) = zpos
+            ax(n) = (REAL(ip, 4) + xpos_rel) * DX
+            ay(n) = (REAL(jp, 4) + ypos_rel) * DY
+            az(n) = (REAL(kp, 4) + zpos_rel) * DZ
+
+            prop_offset = (n - 1) * n_props
+            z_term = p_zlev(kp) - (1.0_4 - zpos_rel) * dz(kp)
+
+            val_grid_z = REAL(kp, 4) - 1.0_4 + zpos_rel
+
+            IF (idx_age > 0) THEN
+                p_props(prop_offset + idx_age) = p_props(prop_offset + idx_age) + DT
+            END IF
+
+            IF (idx_uvexp2 > 0) THEN
+               p_props(prop_offset + idx_uvexp2) = p_props(prop_offset + idx_uvexp2) + &
+                                                   DT * EXP(1.05_4 * z_term)
+            END IF
+            
+            IF (idx_uvexp10 > 0) THEN
+               p_props(prop_offset + idx_uvexp10) = p_props(prop_offset + idx_uvexp10) + &
+                                                    DT * EXP(0.23_4 * z_term)
+            END IF
+            
+            IF (idx_zmin > 0) THEN
+               p_props(prop_offset + idx_zmin) = min(p_props(prop_offset + idx_zmin), val_grid_z)
+            END IF
+            
+            IF (idx_zmax > 0) THEN
+               p_props(prop_offset + idx_zmax) = max(p_props(prop_offset + idx_zmax), val_grid_z)
+            END IF
+
+            idx_1d = (jp-1)*ni + ip
+            
+            IF (p_mld(idx_1d) > -z_term) THEN
+               
+               IF (idx_ml_ages > 0) THEN
+                  ! 1. 累積秒數
+                  p_props(prop_offset + idx_ml_ages) = p_props(prop_offset + idx_ml_ages) + DT
+                  
+                  IF (idx_ml_aged > 0) THEN
+                     days_inc = INT(p_props(prop_offset + idx_ml_ages) / 86400.0_4)
+                     
+                     IF (days_inc > 0.0_4) THEN
+                        p_props(prop_offset + idx_ml_aged) = p_props(prop_offset + idx_ml_aged) + days_inc
+                        p_props(prop_offset + idx_ml_ages) = p_props(prop_offset + idx_ml_ages) - (days_inc * 86400.0_4)
+                     END IF
+                  END IF
+
+               ELSE IF (idx_ml_aged > 0) THEN
+                  p_props(prop_offset + idx_ml_aged) = p_props(prop_offset + idx_ml_aged) + (DT / 86400.0_4)
+               END IF
+            END IF
+
+            IF (kp == nk) THEN
+               
+               IF (idx_sfc_ages > 0) THEN
+                  p_props(prop_offset + idx_sfc_ages) = p_props(prop_offset + idx_sfc_ages) + DT
+                  
+                  IF (idx_sfc_aged > 0) THEN
+                     days_inc = INT(p_props(prop_offset + idx_sfc_ages) / 86400.0_4)
+                     
+                     IF (days_inc > 0.0_4) THEN
+                        p_props(prop_offset + idx_sfc_aged) = p_props(prop_offset + idx_sfc_aged) + days_inc
+                        p_props(prop_offset + idx_sfc_ages) = p_props(prop_offset + idx_sfc_ages) - (days_inc * 86400.0_4)
+                     END IF
+                  END IF
+
+               ELSE IF (idx_sfc_aged > 0) THEN
+                   p_props(prop_offset + idx_sfc_aged) = p_props(prop_offset + idx_sfc_aged) + (DT / 86400.0_4)
+               END IF
+            END IF
 
         END DO ! loop over particle
 
@@ -347,12 +543,15 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     CALL dv_dispv%free(); 
     CALL dv_dispt%free()
     CALL dv_rmvmask%free()
+    CALL dv_zlev%free()
+    CALL dv_mld%free()
+    CALL dv_props%free()    
     CALL px%free(); CALL py%free(); CALL pz%free()
-    CALL vx%free(); CALL vy%free(); CALL vz%free()    
+    CALL vx%free(); CALL vy%free(); CALL vz%free()  
 
 END SUBROUTINE rk4
 
 CONTAINS
   INCLUDE "cross_ckeck_logic.inc"
-  INCLUDE "rand.int"
+  INCLUDE "rand.inc"
   INCLUDE "particle_init.inc"

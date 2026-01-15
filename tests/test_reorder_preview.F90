@@ -6,6 +6,7 @@ PROGRAM test_reorder_dv_fixed
 
 ! --- 變數宣告 ---
   INTEGER(8) :: N, GX, GY, GZ, GXYZ
+  INTEGER(8) :: n_cells
   INTEGER    :: ios
 
   ! --- 1. Namelist 定義 ---
