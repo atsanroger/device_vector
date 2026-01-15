@@ -93,6 +93,25 @@ PROGRAM test_reorder_dv_fixed
                    dv_ids%get_handle(),   dv_ids_buf%get_handle())
   CALL dv_codes%acc_map(codes); 
   CALL dv_ids%acc_map(ids)
+  
+  CALL dv_codes%download()
+
+  is_sorted = .TRUE.
+  DO i = 1, N-1
+     IF (dv_codes%ptr(i) > dv_codes%ptr(i+1)) THEN
+        PRINT *, ">>> Sort Error at index:", i
+        PRINT *, "    Current:", dv_codes%ptr(i)
+        PRINT *, "    Next:   ", dv_codes%ptr(i+1)
+        is_sorted = .FALSE.
+        EXIT
+     END IF
+  END DO
+
+  IF (is_sorted) THEN
+      PRINT *, "✅ PASS: CPU Verification Success! (Data is sorted)"
+  ELSE
+      PRINT *, "❌ FAIL: CPU Verification Failed"
+  END IF
 
   PRINT *, "[Step 3] Gathering..."
   CALL gather_particles(N, ids, ax, atx)
