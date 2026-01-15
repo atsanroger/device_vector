@@ -1,6 +1,10 @@
 MODULE pure_openacc_sort_mod
   USE openacc
   IMPLICIT NONE
+
+  ! GPU Hardware constant
+  INTEGER, PARAMETER :: WARP_LENGTH = 128
+
 CONTAINS
 
   ! =========================================================
@@ -76,7 +80,8 @@ CONTAINS
        END DO
        
        ! 寫回原陣列 (Ping-Pong)
-       !$acc parallel loop present(keys, vals, keys_buf, vals_buf)
+       !$acc parallel loop gang vector_length(WARP_LENGTH) &
+       !$acc present(keys, vals, keys_buf, vals_buf)
        DO i = 1, n
           keys(i) = keys_buf(i)
           vals(i) = vals_buf(i)
@@ -90,7 +95,6 @@ CONTAINS
     
   END SUBROUTINE openacc_radix_sort_i4
 END MODULE pure_openacc_sort_mod
-
 
 PROGRAM test_pure_vs_oop
   USE Device_Vector 
@@ -124,7 +128,6 @@ PROGRAM test_pure_vs_oop
 
   CALL device_env_init(0, 1)
 
-  ! 讀取設定 (預設 N=100萬，純手寫 Sort 很慢，別跑太大)
   N = 1000000_8; GX = 128; GY = 128; GZ = 128
   OPEN(UNIT=10, FILE='../configs/test_reorder.nml', STATUS='OLD', IOSTAT=ios)
   IF (ios == 0) THEN
@@ -142,18 +145,19 @@ PROGRAM test_pure_vs_oop
   PRINT *, " "
   PRINT *, ">>> ROUND 1: Device Vector (CUB Sort) <<<"
   
-  CALL dv_px%create_buffer(N); CALL dv_py%create_buffer(N); CALL dv_pz%create_buffer(N)
-  CALL dv_tx%create_buffer(N); CALL dv_ty%create_buffer(N); CALL dv_tz%create_buffer(N)
+  CALL dv_px%create_buffer(N);    CALL dv_py%create_buffer(N); CALL dv_pz%create_buffer(N)
+  CALL dv_tx%create_buffer(N);    CALL dv_ty%create_buffer(N); CALL dv_tz%create_buffer(N)
   CALL dv_codes%create_buffer(N); CALL dv_codes_buf%create_buffer(N)
   CALL dv_ids%create_buffer(N);   CALL dv_ids_buf%create_buffer(N)
   CALL dv_cell_ptr%create_buffer(n_cells); CALL dv_cell_cnt%create_buffer(n_cells)
 
-  CALL dv_px%acc_map(ptr_ax); CALL dv_py%acc_map(ptr_ay); CALL dv_pz%acc_map(ptr_az)
-  CALL dv_tx%acc_map(ptr_atx); CALL dv_ty%acc_map(ptr_aty); CALL dv_tz%acc_map(ptr_atz)
+  CALL dv_px%acc_map(ptr_ax);       CALL dv_py%acc_map(ptr_ay); CALL dv_pz%acc_map(ptr_az)
+  CALL dv_tx%acc_map(ptr_atx);      CALL dv_ty%acc_map(ptr_aty); CALL dv_tz%acc_map(ptr_atz)
   CALL dv_codes%acc_map(ptr_codes); CALL dv_ids%acc_map(ptr_ids)
   CALL dv_cell_ptr%acc_map(ptr_cell_ptr); CALL dv_cell_cnt%acc_map(ptr_cell_cnt)
 
-  !$acc parallel loop present(ptr_ax, ptr_ay, ptr_az)
+  !$acc parallel loop gang vector_length(WARP_LENGTH) &
+  !$acc present(ptr_ax, ptr_ay, ptr_az)
   DO i = 1, N
      ptr_ax(i) = REAL(MOD(i * 17, GX), 4) + 0.5
      ptr_ay(i) = REAL(MOD(i * 31, GY), 4) + 0.5
@@ -164,9 +168,10 @@ PROGRAM test_pure_vs_oop
   CALL SYSTEM_CLOCK(t1, t_rate)
 
   ! (A) Morton
-  !$acc parallel loop present(ptr_ax, ptr_ay, ptr_az, ptr_codes, ptr_ids)
+  !$acc parallel loop gang vector_length(WARP_LENGTH) &
+  !$acc present(ptr_ax, ptr_ay, ptr_az, ptr_codes, ptr_ids)
   DO i = 1, N
-     ptr_ids(i) = INT(i, 4) 
+     ptr_ids(i)   = INT(i, 4) 
      ptr_codes(i) = get_morton_code(INT(ptr_ax(i),4), INT(ptr_ay(i),4), INT(ptr_az(i),4))
   END DO
 
@@ -188,18 +193,17 @@ PROGRAM test_pure_vs_oop
   CALL SYSTEM_CLOCK(t2)
   t_dv = REAL(t2 - t1, 8) / REAL(t_rate, 8)
   
-  CALL dv_px%acc_unmap(); CALL dv_py%acc_unmap(); CALL dv_pz%acc_unmap()
-  CALL dv_tx%acc_unmap(); CALL dv_ty%acc_unmap(); CALL dv_tz%acc_unmap()
+  CALL dv_px%acc_unmap();    CALL dv_py%acc_unmap(); CALL dv_pz%acc_unmap()
+  CALL dv_tx%acc_unmap();    CALL dv_ty%acc_unmap(); CALL dv_tz%acc_unmap()
   CALL dv_codes%acc_unmap(); CALL dv_codes_buf%acc_unmap()
   CALL dv_ids%acc_unmap();   CALL dv_ids_buf%acc_unmap()
   CALL dv_cell_ptr%acc_unmap(); CALL dv_cell_cnt%acc_unmap()
 
-  CALL dv_px%free(); CALL dv_py%free(); CALL dv_pz%free()
-  CALL dv_tx%free(); CALL dv_ty%free(); CALL dv_tz%free()
+  CALL dv_px%free();    CALL dv_py%free(); CALL dv_pz%free()
+  CALL dv_tx%free();    CALL dv_ty%free(); CALL dv_tz%free()
   CALL dv_codes%free(); CALL dv_codes_buf%free()
   CALL dv_ids%free();   CALL dv_ids_buf%free()
   CALL dv_cell_ptr%free(); CALL dv_cell_cnt%free()
-
 
 
   ! =================================================================
@@ -230,7 +234,8 @@ PROGRAM test_pure_vs_oop
   CALL SYSTEM_CLOCK(t1, t_rate)
 
   ! (A) Morton
-  !$acc parallel loop present(raw_ax, raw_ay, raw_az, raw_codes, raw_ids)
+  !$acc parallel loop gang vector_length(WARP_LENGTH) &
+  !$acc present(raw_ax, raw_ay, raw_az, raw_codes, raw_ids)
   DO i = 1, N
      raw_ids(i) = INT(i, 4)
      raw_codes(i) = get_morton_code(INT(raw_ax(i),4), INT(raw_ay(i),4), INT(raw_az(i),4))
@@ -292,7 +297,8 @@ CONTAINS
     REAL(4),    INTENT(IN) :: src(*) 
     REAL(4),    INTENT(OUT):: dst(*) 
     INTEGER(8) :: i_loop
-    !$acc parallel loop gang vector present(ids_in, src, dst)
+    !$acc parallel loop gang vector_length(WARP_LENGTH) &
+    !$acc present(ids_in, src, dst)
     DO i_loop = 1, n_pts
        dst(i_loop) = src(ids_in(i_loop))
     END DO
@@ -310,7 +316,8 @@ CONTAINS
        cell_ptr(i) = 0; cell_cnt(i) = 0
     END DO
     
-    !$acc parallel loop gang vector present(sorted_codes, cell_ptr)
+    !$acc parallel loop gang vector_length(WARP_LENGTH) &
+    !$acc present(sorted_codes, cell_ptr)
     DO i = 1, n_pts
        code = sorted_codes(i) + 1 
        prev_code = -1
@@ -318,7 +325,8 @@ CONTAINS
        IF (code /= prev_code .and. code <= n_cells) cell_ptr(code) = INT(i, 4)
     END DO
     
-    !$acc parallel loop gang vector present(sorted_codes, cell_ptr, cell_cnt)
+    !$acc parallel loop gang vector_length(WARP_LENGTH) & 
+    !$acc present(sorted_codes, cell_ptr, cell_cnt)
     DO i = 1, n_pts
        code = sorted_codes(i) + 1
        next_code = -1
