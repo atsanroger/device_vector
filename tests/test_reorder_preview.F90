@@ -6,26 +6,28 @@ PROGRAM test_reorder_dv_fixed
 
 ! --- 變數宣告 ---
   INTEGER(8) :: N, GX, GY, GZ, GXYZ
+  INTEGER(8) :: n_cells
   INTEGER    :: ios
 
   ! --- 1. Namelist 定義 ---
   NAMELIST /sim_config/ N, GX, GY, GZ
 
-  TYPE(device_vector_r4_t) :: px, py, pz, tx, ty, tz
   REAL(4), POINTER :: ax(:), ay(:), az(:), atx(:), aty(:), atz(:)
+  REAL(4) :: rnd_scale_x, rnd_scale_y, rnd_scale_z
 
+  TYPE(device_vector_r4_t) :: px, py, pz, tx, ty, tz
   TYPE(device_vector_i4_t) :: dv_codes, dv_codes_buf
   TYPE(device_vector_i4_t) :: dv_ids,   dv_ids_buf
-  INTEGER, POINTER :: codes(:), ids(:) 
-
   TYPE(device_vector_i4_t) :: dv_cell_ptr, dv_cell_cnt
+
+  INTEGER, POINTER :: codes(:), ids(:) 
   INTEGER, POINTER :: cell_ptr(:), cell_cnt(:)
 
   INTEGER, ALLOCATABLE :: h_codes(:)
   INTEGER, ALLOCATABLE :: h_cell_cnt(:) 
-  INTEGER(8) :: i, total_particles
   INTEGER    :: non_empty_cells 
   LOGICAL    :: is_sorted
+  INTEGER(8) :: i, total_particles
 
   OPEN(UNIT=10, FILE='../configs/test_reorder.nml', STATUS='OLD', IOSTAT=ios)
    IF (ios == 0) THEN
@@ -61,11 +63,19 @@ PROGRAM test_reorder_dv_fixed
   CALL dv_ids%acc_map(ids)
 
   ! 1. 初始化資料
+  rnd_scale_x = REAL(GX, 4) / 100003.0 
+  rnd_scale_y = REAL(GY, 4) / 100003.0
+  rnd_scale_z = REAL(GZ, 4) / 100003.0
+
   !$acc parallel loop present(ax, ay, az)
   DO i = 1, N
-     ax(i) = REAL(MOD(i * 17, 100), 4) + 0.5
-     ay(i) = REAL(MOD(i * 31, 100), 4) + 0.5
-     az(i) = REAL(MOD(i * 13, 100), 4) + 0.5
+     ax(i) = REAL(MOD(i * 17, 100003), 4) * rnd_scale_x
+     ay(i) = REAL(MOD(i * 31, 100003), 4) * rnd_scale_y
+     az(i) = REAL(MOD(i * 13, 100003), 4) * rnd_scale_z
+     
+     ax(i) = ax(i) 
+     ay(i) = ay(i)
+     az(i) = az(i)
   END DO
 
   PRINT *, "[Step 1] Calculating Morton Codes..."
@@ -77,35 +87,36 @@ PROGRAM test_reorder_dv_fixed
   !$acc wait
 
   PRINT *, "[Step 2] Sorting..."
-  CALL dv_codes%acc_unmap(); CALL dv_ids%acc_unmap()
+  CALL dv_codes%acc_unmap(); 
+  CALL dv_ids%acc_unmap()
   CALL vec_sort_i4(dv_codes%get_handle(), dv_codes_buf%get_handle(), &
                    dv_ids%get_handle(),   dv_ids_buf%get_handle())
-  CALL dv_codes%acc_map(codes); CALL dv_ids%acc_map(ids)
+  CALL dv_codes%acc_map(codes); 
+  CALL dv_ids%acc_map(ids)
+  
+  CALL dv_codes%download()
+
+  is_sorted = .TRUE.
+  DO i = 1, N-1
+     IF (dv_codes%ptr(i) > dv_codes%ptr(i+1)) THEN
+        PRINT *, ">>> Sort Error at index:", i
+        PRINT *, "    Current:", dv_codes%ptr(i)
+        PRINT *, "    Next:   ", dv_codes%ptr(i+1)
+        is_sorted = .FALSE.
+        EXIT
+     END IF
+  END DO
+
+  IF (is_sorted) THEN
+      PRINT *, "✅ PASS: CPU Verification Success! (Data is sorted)"
+  ELSE
+      PRINT *, "❌ FAIL: CPU Verification Failed"
+  END IF
 
   PRINT *, "[Step 3] Gathering..."
   CALL gather_particles(N, ids, ax, atx)
   CALL gather_particles(N, ids, ay, aty)
   CALL gather_particles(N, ids, az, atz)
-
-  ! 更新回 ax
-  !$acc parallel loop present(ax, ay, az, atx, aty, atz)
-  DO i = 1, N
-     ax(i) = atx(i); ay(i) = aty(i); az(i) = atz(i)
-  END DO
-
-  ! 驗證 Sort
-  ALLOCATE(h_codes(N))
-  !$acc update host(codes)
-  h_codes = codes(1:N)
-  is_sorted = .TRUE.
-  DO i = 1, N-1
-     IF (h_codes(i) > h_codes(i+1)) THEN
-        PRINT *, ">>> Sort ERROR at ", i
-        is_sorted = .FALSE.
-        EXIT
-     END IF
-  END DO
-  IF (is_sorted) PRINT *, "✅ PASS: GPU Sort & Reorder 成功！"
 
   ! =========================================================
   ! Step 4: Edge Finding
@@ -120,7 +131,6 @@ PROGRAM test_reorder_dv_fixed
   !$acc update host(cell_cnt)
   h_cell_cnt = cell_cnt(1:n_cells)
 
-  ! 1. 統計非空網格數
   non_empty_cells = 0
   total_particles = 0
   DO i = 1, n_cells
@@ -138,9 +148,9 @@ PROGRAM test_reorder_dv_fixed
   PRINT *, "-------------------------------------------"
 
   IF (total_particles == N) THEN
-     PRINT *, "✅ PASS: 所有粒子都被正確歸入網格！ (Count sum == N)"
+     PRINT *, "✅ PASS！ (Count sum == N)"
   ELSE
-     PRINT *, "❌ FAIL: 粒子總數不符！ Edge Finding 有問題。"
+     PRINT *, "❌ FAIL: ！ Edge Finding is wrong."
      PRINT *, "Expected: ", N, ", Got: ", total_particles
   END IF
 
