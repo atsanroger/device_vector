@@ -1,6 +1,6 @@
 PROGRAM main_driver
     USE Device_Vector
-    USE particles_acc
+    USE openacc
     IMPLICIT NONE
 
     INTEGER :: ni = 100, nj = 100, nk = 50
