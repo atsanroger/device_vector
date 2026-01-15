@@ -100,6 +100,7 @@ PROGRAM test_pure_vs_oop
   USE Device_Vector 
   USE pure_openacc_sort_mod
   USE openacc
+  USE omp_lib
   IMPLICIT NONE
 
   ! 1. Namelist
