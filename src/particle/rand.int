@@ -1,7 +1,7 @@
 ! ============================================================================
-  ! Random Number Generators (XORShift + Box-Muller)
-  ! File: rand.int
-  ! ============================================================================
+! Random Number Generators (XORShift + Box-Muller)
+! File: rand.int
+! ============================================================================
 
 !$acc routine seq
 FUNCTION urand(seed) RESULT(val)

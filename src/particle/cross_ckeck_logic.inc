@@ -123,18 +123,3 @@ SUBROUTINE cross_z_branchless(kpos, zpos, m_packed, dz_val, idz0_val, &
     ! Safety Clamp
     zpos = min(max(zpos, ZERO_4), ONE_4 - EPS_4)
 END SUBROUTINE cross_z_branchless
-
-
-! Z 方向呼叫範例
-!IF (zpos >= 1.0_4 .OR. zpos < 0.0_4) THEN
-!    ! 只有越界時才讀取這些陣列
-!    val_dz      = dz(kp)
-!    val_idx_now = idz0(kp)
-!    val_idx_nxt = idz0(kp+1)
-!    val_idx_prv = idz0(kp-1)
-!    val_ref     = dz_ref(ip, jp, kp) ! 讀取地形高度
-!
-!    CALL cross_z_branchless(kp, zpos, m_curr, val_dz, val_idx_now, &
-!                            val_idx_nxt, val_idx_prv, val_ref, &
-!                            reflc_sfc, reflc_btm, repul_sfc, repul_btm)
-!END IF

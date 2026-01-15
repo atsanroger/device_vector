@@ -1,170 +1,300 @@
-SUBROUTINE run_device_vector()
-  IMPLICIT NONE
+SUBROUTINE rk4(host_data)
+    USE Device_Vector
+    USE PARAMETERS
+    IMPLICIT NONE
+    
+    ! 輸入資料
+    REAL(4), INTENT(IN) :: host_data(:)
+    
+    ! 本地變數
+    REAL(4), ALLOCATABLE, TARGET :: f1d_local(:)
+    
+    ! Device Vector 結構
+    TYPE(device_vector_r4_t) :: px, py, pz, vx, vy, vz
+    REAL(4), POINTER, CONTIGUOUS :: ax(:), ay(:), az(:), aux(:), auy(:), auz(:)
+    
+    ! 迴圈變數
+    INTEGER(8) :: i_step, n
+    
+    ! RK4 運算需要的暫存變數
+    REAL(4) :: xpos, ypos, zpos
+    REAL(4) :: start_x, start_y, start_z
+    REAL(4) :: tk1x, tk1y, tk1z, tk2x, tk2y, tk2z
+    REAL(4) :: tk3x, tk3y, tk3z, tk4x, tk4y, tk4z
+    REAL(4) :: fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
+    INTEGER(8) :: ii, jj, kk, off8
 
-  !ALLOCATE(f1d(GXYZ * 3)); f1d = 0.1_4
-  !!$acc enter data copyin(f1d)
+    INTEGER :: ip, jp, kp
+    INTEGER(1) :: m_curr
+    REAL(4) :: d_val, idx_n, idx_p, idy_n, idy_p
+    REAL(4) :: val_dz, val_idx_now, val_idx_nxt, val_idx_prv, val_ref
+    LOGICAL :: i_chg, j_chg
 
-  CALL px%create_buffer(N_P);  CALL py%create_buffer(N_P);  CALL pz%create_buffer(N_P)
-  CALL vx%create_buffer(N_P);  CALL vy%create_buffer(N_P);  CALL vz%create_buffer(N_P)
-  CALL k1x%create_buffer(N_P); CALL k1y%create_buffer(N_P); CALL k1z%create_buffer(N_P)
-  CALL k2x%create_buffer(N_P); CALL k2y%create_buffer(N_P); CALL k2z%create_buffer(N_P)
-  CALL k3x%create_buffer(N_P); CALL k3y%create_buffer(N_P); CALL k3z%create_buffer(N_P)
-  CALL k4x%create_buffer(N_P); CALL k4y%create_buffer(N_P); CALL k4z%create_buffer(N_P)
+    ! 1. 準備資料
+    ALLOCATE(f1d_local(SIZE(host_data)))
+    f1d_local = host_data
+    $acc enter data copyin(f1d_local)
 
-  CALL px%acc_map(ax);    CALL py%acc_map(ay);    CALL pz%acc_map(az)
-  CALL vx%acc_map(aux);   CALL vy%acc_map(auy);   CALL vz%acc_map(auz)
-  CALL k1x%acc_map(ak1x); CALL k1y%acc_map(ak1y); CALL k1z%acc_map(ak1z)
-  CALL k2x%acc_map(ak2x); CALL k2y%acc_map(ak2y); CALL k2z%acc_map(ak2z)
-  CALL k3x%acc_map(ak3x); CALL k3y%acc_map(ak3y); CALL k3z%acc_map(ak3z)
-  CALL k4x%acc_map(ak4x); CALL k4y%acc_map(ak4y); CALL k4z%acc_map(ak4z)
+    ! 2. 建立與映射 Device Vector
+    CALL px%create_buffer(N_P);  CALL py%create_buffer(N_P);  CALL pz%create_buffer(N_P)
+    CALL vx%create_buffer(N_P);  CALL vy%create_buffer(N_P);  CALL vz%create_buffer(N_P)
+    CALL px%acc_map(ax);    CALL py%acc_map(ay);    CALL pz%acc_map(az)
+    CALL vx%acc_map(aux);   CALL vy%acc_map(auy);   CALL vz%acc_map(auz)
 
-  !$acc parallel loop present(ax, ay, az, aux, auy, auz)
-  DO n = 1, N_P
-     ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
-  END DO
+    ! 3. 初始化粒子
+    !$acc parallel loop present(ax, ay, az, aux, auy, auz)
+    DO n = 1, N_P
+        ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
+    END DO
+    CALL device_synchronize() 
 
-  !PRINT *, "[Run] Physics RK4  on GPU..."
-  CALL device_synchronize() 
-
-   DO i_step = 1, N_S
-     
-     ! --- Step 1: k1 = f(P_n) ---
-     !$acc parallel loop gang vector_length(WARP_LENGTH) present(f1d, ax, ay, az, ak1x, ak1y, ak1z) &
-     !$acc private(fx,fy,fz,ii,jj,kk,wx,wy,wz,off8,w00,w10,w0,w1)
-     DO n = 1, N_P
-        fx=ax(n)/DX; fy=ay(n)/DY; fz=az(n)/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-        IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-        wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+    ! 4. 時間積分主迴圈 (RK4 內嵌)
+    !$acc data present(f1d_local, ax, ay, az)
+    DO i_step = 1, N_S
         
-        ! ★ 修正
-        off8=kk*GXY+jj*GX+ii+1_8
-        
-        ! X-interp
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx
-        w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx ! ★ +64 改 +GX
-        w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx
-        w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx ! ★ +64 改 +GX
-        w1=w00*(1.-wy)+w10*wy
-        ak1x(n)=w0*(1.-wz)+w1*wz
-        
-        ! Y-interp
-        off8=off8+GXYZ
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx
-        w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx ! ★ +64 改 +GX
-        w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx
-        w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx ! ★ +64 改 +GX
-        w1=w00*(1.-wy)+w10*wy
-        ak1y(n)=w0*(1.-wz)+w1*wz
-        
-        ! Z-interp
-        off8=off8+GXYZ
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx
-        w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx ! ★ +64 改 +GX
-        w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx
-        w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx ! ★ +64 改 +GX
-        w1=w00*(1.-wy)+w10*wy
-        ak1z(n)=w0*(1.-wz)+w1*wz
-     END DO
+        !$acc parallel loop gang vector_length(WARP_LENGTH) &
+        !$acc private(curr_x, curr_y, curr_z, start_x, start_y, start_z) &
+        !$acc private(fx, fy, fz, ii, jj, kk, wx, wy, wz, off8, w00, w10, w0, w1) &
+        !$acc private(tk1x, tk1y, tk1z, tk2x, tk2y, tk2z) &
+        !$acc private(tk3x, tk3y, tk3z, tk4x, tk4y, tk4z)
+        DO n = 1, N_P
+            
+            ! ================= RK4 START =================
+            ! 1. 紀錄起點
+            start_x = ax(n); start_y = ay(n); start_z = az(n)
 
-     ! --- Step 2: k2 = f(P_n + 0.5*dt*k1) ---
-     !$acc parallel loop gang vector_length(WARP_LENGTH) present(f1d, ax, ay, az, ak1x, ak1y, ak1z, ak2x, ak2y, ak2z) &
-     !$acc private(tx,ty,tz,fx,fy,fz,ii,jj,kk,wx,wy,wz,off8,w00,w10,w0,w1)
-     DO n = 1, N_P
-        tx=ax(n)+0.5*DT*ak1x(n); ty=ay(n)+0.5*DT*ak1y(n); tz=az(n)+0.5*DT*ak1z(n)
-        fx=tx/DX; fy=ty/DY; fz=tz/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-        IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-        wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-        
-        off8=kk*GXY+jj*GX+ii+1_8 !
-        
-        ! X-interp
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak2x(n)=w0*(1.-wz)+w1*wz
-        ! Y-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak2y(n)=w0*(1.-wz)+w1*wz
-        ! Z-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak2z(n)=w0*(1.-wz)+w1*wz
-     END DO
+            ! ---------------------------------------------
+            ! Step 1: K1 (at Start)
+            ! ---------------------------------------------
+            curr_x = start_x; curr_y = start_y; curr_z = start_z
+            
+            fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ
+            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
+            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
+            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+            
+            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+            off8=kk*GXY+jj*GX+ii+1_8
+            
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk1x=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk1y=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk1z=w0*(1.-wz)+w1*wz
 
-     ! --- Step 3: k3 = f(P_n + 0.5*dt*k2) ---
-     !$acc parallel loop gang vector_length(WARP_LENGTH) present(f1d, ax, ay, az, ak2x, ak2y, ak2z, ak3x, ak3y, ak3z) &
-     !$acc private(tx,ty,tz,fx,fy,fz,ii,jj,kk,wx,wy,wz,off8,w00,w10,w0,w1)
-     DO n = 1, N_P
-        tx=ax(n)+0.5*DT*ak2x(n); ty=ay(n)+0.5*DT*ak2y(n); tz=az(n)+0.5*DT*ak2z(n)
-        fx=tx/DX; fy=ty/DY; fz=tz/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-        IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-        wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-        
-        off8=kk*GXY+jj*GX+ii+1_8 !
-        
-        ! X-interp
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak3x(n)=w0*(1.-wz)+w1*wz
-        ! Y-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak3y(n)=w0*(1.-wz)+w1*wz
-        ! Z-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak3z(n)=w0*(1.-wz)+w1*wz
-     END DO
+            ! ---------------------------------------------
+            ! Step 2: K2 (at Start + 0.5*dt*K1)
+            ! ---------------------------------------------
+            curr_x=start_x+0.5*DT*tk1x
+            curr_y=start_y+0.5*DT*tk1y
+            curr_z=start_z+0.5*DT*tk1z
+            
+            fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ
+            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
+            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
+            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+            
+            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+            off8=kk*GXY+jj*GX+ii+1_8
+            
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk2x=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk2y=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk2z=w0*(1.-wz)+w1*wz
 
-     ! --- Step 4: k4 = f(P_n + dt*k3) ---
-     !$acc parallel loop gang vector_length(WARP_LENGTH) present(f1d, ax, ay, az, ak3x, ak3y, ak3z, ak4x, ak4y, ak4z) &
-     !$acc private(tx,ty,tz,fx,fy,fz,ii,jj,kk,wx,wy,wz,off8,w00,w10,w0,w1)
-     DO n = 1, N_P
-        tx=ax(n)+DT*ak3x(n); ty=ay(n)+DT*ak3y(n); tz=az(n)+DT*ak3z(n)
-        fx=tx/DX; fy=ty/DY; fz=tz/DZ; ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-        IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2; IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2; IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-        wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-        
-        off8=kk*GXY+jj*GX+ii+1_8 !
-        
-        ! X-interp
-        w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak4x(n)=w0*(1.-wz)+w1*wz
-        ! Y-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak4y(n)=w0*(1.-wz)+w1*wz
-        ! Z-interp
-        off8=off8+GXYZ; w00=f1d(off8)*(1.-wx)+f1d(off8+1)*wx; w10=f1d(off8+GX)*(1.-wx)+f1d(off8+GX+1)*wx; w0=w00*(1.-wy)+w10*wy
-        w00=f1d(off8+GXY)*(1.-wx)+f1d(off8+GXY+1)*wx; w10=f1d(off8+GXY+GX)*(1.-wx)+f1d(off8+GXY+GX+1)*wx; w1=w00*(1.-wy)+w10*wy
-        ak4z(n)=w0*(1.-wz)+w1*wz
-     END DO
+            ! ---------------------------------------------
+            ! Step 3: K3 (at Start + 0.5*dt*K2)
+            ! ---------------------------------------------
+            curr_x=start_x+0.5*DT*tk2x
+            curr_y=start_y+0.5*DT*tk2y
+            curr_z=start_z+0.5*DT*tk2z
+            
+            fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ
+            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
+            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
+            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+            
+            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+            off8=kk*GXY+jj*GX+ii+1_8
+            
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk3x=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk3y=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk3z=w0*(1.-wz)+w1*wz
 
-     ! --- Final Update ---
-     !$acc parallel loop gang vector_length(WARP_LENGTH) &
-     !$acc present(ax, ay, az, ak1x, ak1y, ak1z, ak2x, ak2y, ak2z, ak3x, ak3y, ak3z, ak4x, ak4y, ak4z)
-     DO n = 1, N_P
-        ax(n) = ax(n) + (DT/6.0_4)*(ak1x(n) + 2.0_4*ak2x(n) + 2.0_4*ak3x(n) + ak4x(n))
-        ay(n) = ay(n) + (DT/6.0_4)*(ak1y(n) + 2.0_4*ak2y(n) + 2.0_4*ak3y(n) + ak4y(n))
-        az(n) = az(n) + (DT/6.0_4)*(ak1z(n) + 2.0_4*ak2z(n) + 2.0_4*ak3z(n) + ak4z(n))
-     END DO
-  END DO
+            ! ---------------------------------------------
+            ! Step 4: K4 (at Start + dt*K3)
+            ! ---------------------------------------------
+            curr_x=start_x+DT*tk3x
+            curr_y=start_y+DT*tk3y
+            curr_z=start_z+DT*tk3z
+            
+            fx=curr_x/DX; fy=curr_y/DY; fz=curr_z/DZ
+            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
+            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
+            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
+            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
+            
+            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
+            off8=kk*GXY+jj*GX+ii+1_8
+            
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk4x=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk4y=w0*(1.-wz)+w1*wz
+            
+            off8=off8+GXYZ
+            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
+            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
+            w0=w00*(1.-wy)+w10*wy
+            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
+            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
+            w1=w00*(1.-wy)+w10*wy
+            tk4z=w0*(1.-wz)+w1*wz
 
-  CALL device_synchronize() 
+            ! ---------------------------------------------
+            ! 更新位置
+            ! ---------------------------------------------
+            curr_x = start_x + (DT/6.0_4)*(tk1x+2.*tk2x+2.*tk3x+tk4x)
+            curr_y = start_y + (DT/6.0_4)*(tk1y+2.*tk2y+2.*tk3y+tk4y)
+            curr_z = start_z + (DT/6.0_4)*(tk1z+2.*tk2z+2.*tk3z+tk4z)            ! ================= RK4 END =================
 
-  CALL px%acc_unmap();  CALL py%acc_unmap();  CALL pz%acc_unmap()
-  CALL k1x%acc_unmap(); CALL k2x%acc_unmap(); CALL k3x%acc_unmap(); CALL k4x%acc_unmap()
-  CALL k1y%acc_unmap(); CALL k2y%acc_unmap(); CALL k3y%acc_unmap(); CALL k4y%acc_unmap()
-  CALL k1z%acc_unmap(); CALL k2z%acc_unmap(); CALL k3z%acc_unmap(); CALL k4z%acc_unmap()
+            ip = INT(curr_x/DX); jp = INT(curr_y/DY); kp = INT(curr_z/DZ)
+            m_curr = mask_packed(ip, jp, kp)
 
-  CALL px%free();  CALL py%free();  CALL pz%free()
-  CALL k1x%free(); CALL k2x%free(); CALL k3x%free(); CALL k4x%free()
-  CALL k1y%free(); CALL k2y%free(); CALL k3y%free(); CALL k4y%free()
-  CALL k1z%free(); CALL k2z%free(); CALL k3z%free(); CALL k4z%free()
-  !$acc exit data delete(f1d)
-  
-END SUBROUTINE
+            ! --- X Check ---
+            IF (curr_x >= REAL(GX-1,4) .OR. curr_x < 0.0_4) THEN
+              d_val = dx(ip, jp)
+              idx_n = idx0(ip+1, jp); idx_p = idx0(ip-1, jp)
+              CALL cross_x_branchless(ip, curr_x, m_curr, d_val, idx_n, idx_p, reflc, repul)
+              i_chg = .TRUE.
+            ELSE
+              i_chg = .FALSE.
+            END IF
+
+            ! --- Y Check ---
+            IF (i_chg) m_curr = mask_packed(ip, jp, kp)
+            IF (curr_y >= REAL(GY-1,4) .OR. curr_y < 0.0_4) THEN
+              d_val = dy(ip, jp)
+              idy_n = idy0(ip, jp+1); idy_p = idy0(ip, jp-1)
+              CALL cross_y_branchless(jp, curr_y, m_curr, d_val, idy_n, idy_p, reflc, repul)
+              j_chg = .TRUE.
+            ELSE
+              j_chg = .FALSE.
+            END IF
+
+            IF (zpos >= 1.0_4 .OR. zpos < 0.0_4) THEN
+                val_dz      = dz(kp)
+                val_idx_now = idz0(kp)
+                val_idx_nxt = idz0(kp+1)
+                val_idx_prv = idz0(kp-1)
+                val_ref     = dz_ref(ip, jp, kp) !
+            
+                CALL cross_z_branchless(kp, zpos, m_curr, val_dz, val_idx_now, &
+                                        val_idx_nxt, val_idx_prv, val_ref, &
+                                        reflc_sfc, reflc_btm, repul_sfc, repul_btm)
+
+            END IF
+
+            ax(n) = curr_x
+            ay(n) = curr_y
+            az(n) = curr_z
+
+        END DO ! loop over particle
+
+    END DO ! rk4 time loop
+    !$acc end data
+
+    !CALL device_synchronize() 
+    
+    !CALL px%acc_unmap(); CALL py%acc_unmap(); CALL pz%acc_unmap()
+    !CALL vx%acc_unmap(); CALL vy%acc_unmap(); CALL vz%acc_unmap()
+    !CALL px%free(); CALL py%free(); CALL pz%free()
+    !CALL vx%free(); CALL vy%free(); CALL vz%free()
+    
+    !!$acc exit data delete(f1d_local)
+    !DEALLOCATE(f1d_local)
+
+END SUBROUTINE rk4
+
+CONTAINS
+  INCLUDE "cross_ckeck_logic.inc"
+  INCLUDE "rand.int"
+  INCLUDE "particle_init.inc"
