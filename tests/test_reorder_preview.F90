@@ -64,9 +64,9 @@ PROGRAM test_reorder_dv_fixed
   ! 1. 初始化資料
   !$acc parallel loop present(ax, ay, az)
   DO i = 1, N
-     ax(i) = REAL(MOD(i * 17, 100), 4) + 0.5
-     ay(i) = REAL(MOD(i * 31, 100), 4) + 0.5
-     az(i) = REAL(MOD(i * 13, 100), 4) + 0.5
+     ax(i) = REAL(MOD(i * 17, INT(GX, 4)), 4) + 0.5
+     ay(i) = REAL(MOD(i * 31, INT(GY, 4)), 4) + 0.5
+     az(i) = REAL(MOD(i * 13, INT(GZ, 4)), 4) + 0.5
   END DO
 
   PRINT *, "[Step 1] Calculating Morton Codes..."
