@@ -101,10 +101,11 @@ PROGRAM main_driver
     
     !$acc update host(props)
     PRINT *, "Particle 1 Age:", props(idx_age, 1)
+    PRINT *, "Expected Age:  ", dt * REAL(n_steps)
 
+    
     ! 清理
     DEALLOCATE(host_data, disph, dispv, dispt, rmvmask, zlev, mld, props, alive)
-    !$acc exit data delete(mask_packed)
 
 CONTAINS
 
