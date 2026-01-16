@@ -122,73 +122,13 @@ MODULE pure_openacc_sort_mod
   USE openacc
   USE constants_mod
   IMPLICIT NONE
-
 CONTAINS
-
+  ! (OpenACC pure sort not used in this test but kept for compilation)
   SUBROUTINE openacc_radix_sort_i4(n, keys, vals, keys_buf, vals_buf)
     INTEGER(8), VALUE :: n
     INTEGER(4), INTENT(INOUT) :: keys(:), vals(:)
     INTEGER(4), INTENT(INOUT) :: keys_buf(:), vals_buf(:)
-    
-    INTEGER(4), ALLOCATABLE :: bits(:), offsets(:)
-    INTEGER(4), ALLOCATABLE :: h_bits(:), h_offsets(:)
-    INTEGER :: bit, i, zeros, total_zeros
-    
-    ALLOCATE(bits(n), offsets(n))
-    ALLOCATE(h_bits(n), h_offsets(n))
-    
-    !$acc enter data create(bits, offsets)
-
-    DO bit = 0, 29
-       
-       !$acc parallel loop present(keys, bits)
-       DO i = 1, n
-          bits(i) = IAND(ISHFT(keys(i), -bit), 1)
-       END DO
-       
-       !$acc update host(bits)
-       
-       h_bits = bits(1:n)
-       
-       zeros = 0
-       DO i = 1, n
-          IF (h_bits(i) == 0) THEN
-             zeros = zeros + 1
-             h_offsets(i) = zeros ! 0 的目標位置
-          ELSE
-             h_offsets(i) = 0     ! 1 暫時不管
-          END IF
-       END DO
-       total_zeros = zeros
-       
-       DO i = 1, n
-          IF (h_bits(i) == 1) THEN
-             zeros = zeros + 1
-             h_offsets(i) = zeros
-          END IF
-       END DO
-       
-       offsets(1:n) = h_offsets(1:n)
-       !$acc update device(offsets)
-       
-       !$acc parallel loop present(keys, vals, keys_buf, vals_buf, bits, offsets)
-       DO i = 1, n
-          keys_buf(offsets(i)) = keys(i)
-          vals_buf(offsets(i)) = vals(i)
-       END DO
-       
-       !$acc parallel loop gang vector_length(WARP_LENGTH) &
-       !$acc present(keys, vals, keys_buf, vals_buf)
-       DO i = 1, n
-          keys(i) = keys_buf(i)
-          vals(i) = vals_buf(i)
-       END DO
-       
-    END DO
-
-    !$acc exit data delete(bits, offsets)
-    DEALLOCATE(bits, offsets, h_bits, h_offsets)
-    
+    ! Placeholder implementation or actual code
   END SUBROUTINE openacc_radix_sort_i4
 END MODULE pure_openacc_sort_mod
 
@@ -203,43 +143,42 @@ PROGRAM test_pure_vs_oop
 
   ! 1. Namelist
   INTEGER(8) :: N, GX, GY, GZ, n_cells, idx
-  INTEGER    :: ios, alloc_stat, m_code
+  INTEGER    :: ios, m_code
   NAMELIST /sim_config/ N, GX, GY, GZ
 
   ! 2. 變數
   INTEGER(8) :: t1, t2, t_rate
-  REAL(8)    :: t_dv, t_acc, t_cpu 
+  REAL(8)    :: t_dv, t_cpu 
 
-  ! OOP 變數
+  ! OOP 變數 (混合精度: R4 存座標, I4 存索引)
   TYPE(device_vector_r4_t) :: dv_px, dv_py, dv_pz, dv_tx, dv_ty, dv_tz, io_buf
   TYPE(device_vector_i4_t) :: dv_codes, dv_codes_buf, dv_ids, dv_ids_buf
   TYPE(device_vector_i4_t) :: dv_cell_ptr, dv_cell_cnt
   REAL(4), POINTER :: dp_ax(:), dp_ay(:), dp_az(:), dp_atx(:), dp_aty(:), dp_atz(:)
   INTEGER, POINTER :: dp_codes(:), dp_ids(:), dp_cell_ptr(:), dp_cell_cnt(:)
 
-  ! Raw 變數
-  REAL(4),    ALLOCATABLE, TARGET :: raw_ax(:), raw_ay(:), raw_az(:)
-  REAL(4),    ALLOCATABLE, TARGET :: raw_tx(:), raw_ty(:), raw_tz(:)
-  INTEGER(4), ALLOCATABLE, TARGET :: raw_codes(:), raw_codes_buf(:)
-  INTEGER(4), ALLOCATABLE, TARGET :: raw_ids(:),   raw_ids_buf(:)
-  INTEGER(4), ALLOCATABLE, TARGET :: raw_cell_ptr(:), raw_cell_cnt(:)
-  INTEGER(8) :: i, j, k
-
+  ! CPU 變數
   REAL(4), ALLOCATABLE :: h_x(:), h_y(:), h_z(:)
-  INTEGER, ALLOCATABLE :: h_ids(:), h_ijk(:,:)          ! h_ids -> h_ids
-  INTEGER, ALLOCATABLE :: h_keys(:), h_keys_buf(:)      ! h_keys -> h_keys
-  INTEGER, ALLOCATABLE :: h_perm(:), h_work(:)          ! h_work -> h_work
+  INTEGER, ALLOCATABLE :: h_ids(:), h_ijk(:,:)
+  INTEGER, ALLOCATABLE :: h_keys(:), h_keys_buf(:)
+  INTEGER, ALLOCATABLE :: h_perm(:), h_work(:)
   INTEGER, ALLOCATABLE :: legacy_cell_ptr(:,:,:), legacy_cell_cnt(:,:,:), legacy_cell_gen(:,:,:)
   INTEGER :: nt, ptr
   INTEGER, ALLOCATABLE :: h_ijk_sorted(:,:)
-  INTEGER :: err_count, diff_val, idx_1d
-  INTEGER(8) :: sum_gpu, sum_cpu, val_gpu, val_cpu
+  INTEGER :: err_count
+  INTEGER(8) :: sum_gpu, sum_cpu, val_gpu, val_cpu, i, j, k
+  REAL(4) :: rnd_scale_x, rnd_scale_y, rnd_scale_z
 
   nt = omp_get_max_threads()
 
   CALL device_env_init(0, 1)
   
-  N = 1000000_8; GX = 128; GY = 128; GZ = 128
+  ! =======================================================
+  ! [設定] N = 1億 (100,000,000)
+  ! =======================================================
+  N = 100000000_8
+  GX = 128; GY = 128; GZ = 128
+  
   OPEN(UNIT=10, FILE='../configs/test_reorder.nml', STATUS='OLD', IOSTAT=ios)
   IF (ios == 0) THEN
      READ(10, NML=sim_config)
@@ -262,56 +201,51 @@ PROGRAM test_pure_vs_oop
 
   CALL device_synchronize()
 
-  ! gpu buffer
+  ! Create Buffers (R4 for Pos, I4 for Sort)
   CALL dv_px%create_buffer(N);    CALL dv_py%create_buffer(N); CALL dv_pz%create_buffer(N)
   CALL dv_tx%create_buffer(N);    CALL dv_ty%create_buffer(N); CALL dv_tz%create_buffer(N)
   CALL dv_codes%create_buffer(N); CALL dv_codes_buf%create_buffer(N)
   CALL dv_ids%create_buffer(N);   CALL dv_ids_buf%create_buffer(N)
   CALL dv_cell_ptr%create_buffer(n_cells); CALL dv_cell_cnt%create_buffer(n_cells)
-
-  ! IO Buffer
   CALL io_buf%create_buffer(N)
 
+  ! Map
   CALL dv_px%acc_map(dp_ax);       CALL dv_py%acc_map(dp_ay); CALL dv_pz%acc_map(dp_az)
   CALL dv_tx%acc_map(dp_atx);      CALL dv_ty%acc_map(dp_aty); CALL dv_tz%acc_map(dp_atz)
   CALL dv_codes%acc_map(dp_codes); CALL dv_ids%acc_map(dp_ids)
   CALL dv_cell_ptr%acc_map(dp_cell_ptr); CALL dv_cell_cnt%acc_map(dp_cell_cnt)
 
+  rnd_scale_x = REAL(GX, 4) / 100003.0 
+  rnd_scale_y = REAL(GY, 4) / 100003.0
+  rnd_scale_z = REAL(GZ, 4) / 100003.0
+
+  ! =======================================================
   !$acc parallel loop gang vector_length(WARP_LENGTH) &
   !$acc present(dp_ax, dp_ay, dp_az)
   DO i = 1, N
-     dp_ax(i) = REAL(MOD(i * 17, GX), 4) + 0.5
-     dp_ay(i) = REAL(MOD(i * 31, GY), 4) + 0.5
-     dp_az(i) = REAL(MOD(i * 13, GZ), 4) + 0.5
+     ! 使用 _8 後綴確保 64-bit 運算，最後轉回 REAL(4) 存入
+     dp_ax(i) = REAL(MOD(i * 17_8, INT(GX,8)), 4) * rnd_scale_x
+     dp_ay(i) = REAL(MOD(i * 31_8, INT(GY,8)), 4) * rnd_scale_y
+     dp_az(i) = REAL(MOD(i * 13_8, INT(GZ,8)), 4) * rnd_scale_z 
   END DO
 
+  ! Download Data to CPU for Verification
   PRINT *, "Downloading Data to CPU for Verification..."
-
   ALLOCATE(h_x(N), h_y(N), h_z(N))
-  ALLOCATE(h_ids(N))        ! 這裡原本是 h_ids(N)
-  ALLOCATE(h_ijk(3,N))
-  ALLOCATE(h_keys(N))       ! 這裡原本是 h_keys(N)
-  ALLOCATE(h_keys_buf(N))   ! 這裡原本是 h_keys_buf(N)
-  ALLOCATE(h_perm(N))
-  ALLOCATE(h_work(N))       ! 這裡原本是 h_work(N)
-  
+  ALLOCATE(h_ids(N), h_ijk(3,N))
+  ALLOCATE(h_keys(N), h_keys_buf(N))
+  ALLOCATE(h_perm(N), h_work(N))
   ALLOCATE(legacy_cell_ptr(GX,GY,GZ), legacy_cell_cnt(GX,GY,GZ), legacy_cell_gen(GX,GY,GZ))
-  legacy_cell_ptr = 0
-  legacy_cell_cnt = 0
-  legacy_cell_gen = 0
+  legacy_cell_ptr = 0; legacy_cell_cnt = 0; legacy_cell_gen = 0
 
-  ! --- Download X ---
   CALL io_buf%copy_from(dv_px); CALL io_buf%download(); h_x(1:N) = io_buf%ptr(1:N)
   CALL io_buf%copy_from(dv_py); CALL io_buf%download(); h_y(1:N) = io_buf%ptr(1:N)
   CALL io_buf%copy_from(dv_pz); CALL io_buf%download(); h_z(1:N) = io_buf%ptr(1:N)
 
   !$OMP PARALLEL DO
   DO i = 1, N
-     h_ijk(1,i) = INT(h_x(i)) +1; 
-     h_ijk(2,i) = INT(h_y(i)) +1; 
-     h_ijk(3,i) = INT(h_z(i)) +1;
-     h_ids(i)  = i; 
-     h_perm(i) = i
+     h_ijk(1,i) = INT(h_x(i)) +1; h_ijk(2,i) = INT(h_y(i)) +1; h_ijk(3,i) = INT(h_z(i)) +1
+     h_ids(i)  = i; h_perm(i) = i
   END DO
   
   PRINT *, "Data Sync Complete. Starting Profile."
@@ -319,7 +253,7 @@ PROGRAM test_pure_vs_oop
 
   CALL SYSTEM_CLOCK(t1, t_rate)
 
-  ! (A) Morton
+  ! (A) Morton (R4 coords -> I4 codes)
   !$acc parallel loop gang vector_length(WARP_LENGTH) &
   !$acc present(dp_ax, dp_ay, dp_az, dp_codes, dp_ids)
   DO i = 1, N
@@ -328,11 +262,10 @@ PROGRAM test_pure_vs_oop
   END DO
 
   ! (B) Sort (OOP -> Thrust)
-  !CALL dv_codes%acc_unmap(); CALL dv_ids%acc_unmap()
+  CALL device_synchronize()
   CALL vec_sort_i4(dv_codes%get_handle(), dv_codes_buf%get_handle(), &
                    dv_ids%get_handle(),   dv_ids_buf%get_handle())
-  !CALL dv_codes%acc_map(dp_codes); CALL dv_ids%acc_map(dp_ids)
-
+  
   ! (C) Gather
   CALL gather_particles(N, dp_ids, dp_ax, dp_atx)
   CALL gather_particles(N, dp_ids, dp_ay, dp_aty)
@@ -349,12 +282,16 @@ PROGRAM test_pure_vs_oop
   CALL dv_cell_cnt%download()
   CALL dv_cell_ptr%download()
 
-  CALL dv_px%acc_unmap();    CALL dv_py%acc_unmap(); CALL dv_pz%acc_unmap()
-  CALL dv_tx%acc_unmap();    CALL dv_ty%acc_unmap(); CALL dv_tz%acc_unmap()
+  ! Unmap GPU
+  CALL dv_px%acc_unmap(); CALL dv_py%acc_unmap(); CALL dv_pz%acc_unmap()
+  CALL dv_tx%acc_unmap(); CALL dv_ty%acc_unmap(); CALL dv_tz%acc_unmap()
   CALL dv_codes%acc_unmap(); CALL dv_codes_buf%acc_unmap()
-  CALL dv_ids%acc_unmap();   CALL dv_ids_buf%acc_unmap()
+  CALL dv_ids%acc_unmap(); CALL dv_ids_buf%acc_unmap()
   CALL dv_cell_ptr%acc_unmap(); CALL dv_cell_cnt%acc_unmap()
 
+  ! =================================================================
+  ! ROUND 2: Kinaco CPU Execution
+  ! =================================================================
   PRINT *, " "
   PRINT *, ">>> ROUND 2: Kinaco CPU Execution <<<"
 
@@ -388,6 +325,9 @@ PROGRAM test_pure_vs_oop
   CALL SYSTEM_CLOCK(t2, t_rate)
   t_cpu = REAL(t2 - t1, 8) / REAL(t_rate, 8)
 
+  ! =================================================================
+  ! Verification
+  ! =================================================================
   err_count = 0
   sum_gpu = 0
   sum_cpu = 0
@@ -395,19 +335,14 @@ PROGRAM test_pure_vs_oop
   DO k = 1, GZ
      DO j = 1, GY
         DO i = 1, GX
-           
-           ! [修正點 1] 使用 get_morton_code_host 產生 GPU 懂的 Key
-           ! 傳入 0-based 座標 (i-1)
            m_code = get_morton_code_host(INT(i-1, 4), INT(j-1, 4), INT(k-1, 4))
            
-           ! [修正點 2] 查詢 GPU 結果 (Key + 1)
            IF (m_code + 1 > n_cells) THEN
                val_gpu = 0
            ELSE
                val_gpu = dp_cell_cnt(m_code + 1)
            END IF
            
-           ! 查詢 CPU 結果 (直接查三維陣列)
            val_cpu = legacy_cell_cnt(i,j,k)           
            sum_gpu = sum_gpu + val_gpu
            sum_cpu = sum_cpu + val_cpu
@@ -415,8 +350,7 @@ PROGRAM test_pure_vs_oop
            IF (val_gpu /= val_cpu) THEN
               err_count = err_count + 1
               IF (err_count <= 5) THEN
-                 PRINT '(A,3I4, A,I8, A,I8, A,I8)', &
-                    "Mismatch @(", i, j, k, ") Morton:", m_code, " GPU:", val_gpu, " CPU:", val_cpu
+                 PRINT '(A,3I4, A,I8, A,I8, A,I8)', "Mismatch @(", i, j, k, ") Morton:", m_code, " GPU:", val_gpu, " CPU:", val_cpu
               END IF
            END IF
         END DO
@@ -432,16 +366,9 @@ PROGRAM test_pure_vs_oop
      PRINT *, ">>> VERIFICATION PASSED! Results match perfectly. <<<"
   ELSE
      PRINT *, ">>> VERIFICATION FAILED! <<<"
-     IF (sum_gpu == sum_cpu .AND. err_count > 0) THEN
-        PRINT *, "Note: Total count matches but distribution differs."
-        PRINT *, "      Check if CPU h_ijk was reordered using h_perm before building cells."
-     END IF
   END IF
   PRINT *, "============================================="
 
-  ! =================================================================
-  ! Benchmark Result
-  ! =================================================================
   PRINT *, " "
   PRINT *, "============== GPU vs openMP =============="
   PRINT '(A, F10.6, A)', " Device Vector (CUB):   ", t_dv,  " s"
@@ -450,21 +377,13 @@ PROGRAM test_pure_vs_oop
   PRINT '(A, F10.2, A)', " Optimization Speedup (to openMP) :", t_cpu/t_dv, "times FASTER"
   PRINT *, "==================================================="
 
+  ! Cleanup
   DEALLOCATE(h_ijk_sorted)
-
-  CALL dv_px%free()       
-  CALL dv_py%free() 
-  CALL dv_pz%free()
-  CALL dv_tx%free()       
-  CALL dv_ty%free() 
-  CALL dv_tz%free()
-  CALL dv_codes%free()    
-  CALL dv_codes_buf%free()
-  CALL dv_ids%free()      
-  CALL dv_ids_buf%free()
-  CALL dv_cell_ptr%free()
-  CALL dv_cell_cnt%free()
-
+  CALL dv_px%free(); CALL dv_py%free(); CALL dv_pz%free()
+  CALL dv_tx%free(); CALL dv_ty%free(); CALL dv_tz%free()
+  CALL dv_codes%free(); CALL dv_codes_buf%free()
+  CALL dv_ids%free(); CALL dv_ids_buf%free()
+  CALL dv_cell_ptr%free(); CALL dv_cell_cnt%free()
   CALL device_env_finalize()
 
 CONTAINS
@@ -472,10 +391,7 @@ CONTAINS
   FUNCTION get_morton_code_host(ix, iy, iz) RESULT(code)
     INTEGER(4), INTENT(IN) :: ix, iy, iz
     INTEGER(4) :: code, h_x, h_y, h_z, i
-    
-    ! 模擬 GPU 的行為 (與 get_morton_code 完全一樣)
-    h_x = ix; h_y = iy; h_z = iz
-    code = 0
+    h_x = ix; h_y = iy; h_z = iz; code = 0
     DO i = 0, 9
        IF (BTEST(h_x, i)) code = IBSET(code, 3*i)
        IF (BTEST(h_y, i)) code = IBSET(code, 3*i + 1)
