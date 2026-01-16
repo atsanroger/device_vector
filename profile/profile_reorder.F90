@@ -1,3 +1,117 @@
+MODULE cpu_legacy_mod
+  USE omp_lib
+  IMPLICIT NONE
+
+  INTEGER, PARAMETER :: GX=128, GY=128, GZ=128
+  INTEGER :: isize=GX, jsize=GY, ksize=GZ
+
+CONTAINS
+
+  SUBROUTINE sort_mt(key, pin, pout, n, nt)
+    INTEGER, INTENT(IN) :: n, nt, key(:), pin(:)
+    INTEGER, INTENT(OUT):: pout(:)
+    INTEGER :: cnt_mt(0:255, 0:nt-1), off_mt(0:255, 0:nt-1)
+    INTEGER :: cnt(0:255), off(0:255), i, j, tid
+
+!$OMP PARALLEL PRIVATE(tid, i, j)
+    tid = omp_get_thread_num()
+    cnt_mt(:,tid) = 0
+!$OMP DO SCHEDULE(STATIC)
+    DO i=1, n
+       j = key(i)
+       cnt_mt(j,tid) = cnt_mt(j,tid) + 1
+    END DO
+!$OMP SINGLE
+    DO i=0, 255
+       cnt(i) = sum(cnt_mt(i,:))
+    END DO
+    off(0) = 1
+    DO i=1, 255
+       off(i) = off(i-1) + cnt(i-1)
+    END DO
+    DO i=0, 255
+       off_mt(i,0) = off(i)
+       DO j=1, nt-1
+          off_mt(i,j) = off_mt(i,j-1) + cnt_mt(i,j-1)
+       END DO
+    END DO
+!$OMP END SINGLE
+!$OMP DO SCHEDULE(STATIC)
+    DO i=1, n
+       j = key(i)
+       pout(off_mt(j,tid)) = pin(i)
+       off_mt(j,tid) = off_mt(j,tid) + 1
+    END DO
+!$OMP END PARALLEL
+  END SUBROUTINE
+
+  SUBROUTINE original_cpu_build_cell_mt(n, ijk_arr, cell_ptr, cell_cnt, cell_gen, nt)
+    INTEGER(8), INTENT(IN) :: n
+    INTEGER, INTENT(IN)    :: nt, ijk_arr(3,n)
+    INTEGER, INTENT(OUT)   :: cell_ptr(GX,GY,GZ), cell_cnt(GX,GY,GZ), cell_gen(GX,GY,GZ)
+    INTEGER :: cnt_local(0:1, 0:nt-1), ptr_local(0:1, 0:nt-1), ijk_local(3, 0:1, 0:nt-1)
+    LOGICAL :: flag(0:1, 0:nt-1)
+    INTEGER :: ptr_start(0:nt), key_start(0:nt), tid, a, b, i, j, k, key, m, ptr
+
+    a = n / nt ; b = n - a*nt
+    DO tid=0, nt-1
+       ptr_start(tid) = tid*a + min(tid,b) + 1
+       i=ijk_arr(1,ptr_start(tid)); j=ijk_arr(2,ptr_start(tid)); k=ijk_arr(3,ptr_start(tid))
+       key_start(tid) = key_morton3_cpu(i,j,k)
+    END DO
+    ptr_start(nt) = n+1 ; key_start(nt) = 2147483647
+    flag(:,:) = .FALSE.
+
+!$OMP PARALLEL PRIVATE(i,j,k,ptr,key,tid) NUM_THREADS(nt)
+    tid = omp_get_thread_num()
+    DO ptr=ptr_start(tid), ptr_start(tid+1)-1
+       i=ijk_arr(1,ptr); j=ijk_arr(2,ptr); k=ijk_arr(3,ptr); key = key_morton3_cpu(i,j,k)
+       IF (key==key_start(tid)) THEN
+          IF (flag(0,tid)) THEN ; cnt_local(0,tid) = cnt_local(0,tid) + 1
+          ELSE ; cnt_local(0,tid) = 1; ptr_local(0,tid) = ptr ; END IF
+          ijk_local(:,0,tid) = (/i,j,k/) ; flag(0,tid) = .TRUE.
+       ELSE IF (key==key_start(tid+1)) THEN
+          IF (flag(1,tid)) THEN ; cnt_local(1,tid) = cnt_local(1,tid) + 1
+          ELSE ; cnt_local(1,tid) = 1; ptr_local(1,tid) = ptr ; END IF
+          ijk_local(:,1,tid) = (/i,j,k/) ; flag(1,tid) = .TRUE.
+       ELSE
+          IF (cell_gen(i,j,k) < 1) THEN
+             cell_ptr(i,j,k) = ptr; cell_cnt(i,j,k) = 1; cell_gen(i,j,k) = 1
+          ELSE ; cell_cnt(i,j,k) = cell_cnt(i,j,k) + 1 ; END IF
+       END IF
+    END DO
+!$OMP END PARALLEL
+
+    DO tid=0, nt-1
+       DO m=0, 1
+          IF (flag(m,tid)) THEN
+             i=ijk_local(1,m,tid); j=ijk_local(2,m,tid); k=ijk_local(3,m,tid)
+             IF (cell_gen(i,j,k) < 1) THEN
+                cell_ptr(i,j,k) = ptr_local(m,tid); cell_cnt(i,j,k) = cnt_local(m,tid); cell_gen(i,j,k) = 1
+             ELSE
+                cell_ptr(i,j,k) = min(cell_ptr(i,j,k), ptr_local(m,tid))
+                cell_cnt(i,j,k) = cell_cnt(i,j,k) + cnt_local(m,tid)
+             END IF
+          END IF
+       END DO
+    END DO
+  END SUBROUTINE
+
+  PURE FUNCTION key_morton3_cpu(i, j, k) RESULT(key)
+     INTEGER, INTENT(IN) :: i, j, k
+     INTEGER :: key, ih, il, jh, jl, kh, kl
+     INTEGER, PARAMETER :: tbl(0:7) = (/0, 1, 8, 9, 64, 65, 72, 73/)
+     ih = ISHFT(i-1, -3); jh = ISHFT(j-1, -3); kh = ISHFT(k-1, -3)
+     il = IAND(i-1, 7_4); jl = IAND(j-1, 7_4); kl = IAND(k-1, 7_4)
+     key = (kh*ISHFT(jsize+7,-3) + jh)*ISHFT(isize+7,-3) + ih
+     key = ISHFT(key, 9)
+     key = IOR(key, ISHFT(tbl(kl),2))
+     key = IOR(key, ISHFT(tbl(jl),1))
+     key = IOR(key, tbl(il))
+  END FUNCTION
+
+END MODULE cpu_legacy_mod
+
 MODULE pure_openacc_sort_mod
   USE openacc
   IMPLICIT NONE
@@ -77,6 +191,7 @@ END MODULE pure_openacc_sort_mod
 PROGRAM test_pure_vs_oop
   USE Device_Vector 
   USE pure_openacc_sort_mod
+  USE cpu_legacy_mod
   USE openacc
   USE omp_lib
   IMPLICIT NONE
@@ -88,7 +203,7 @@ PROGRAM test_pure_vs_oop
 
   ! 2. 變數
   INTEGER(8) :: t1, t2, t_rate
-  REAL(8)    :: t_dv, t_acc 
+  REAL(8)    :: t_dv, t_acc, t_cpu 
 
   ! OOP 變數
   TYPE(device_vector_r4_t) :: dv_px, dv_py, dv_pz, dv_tx, dv_ty, dv_tz
@@ -105,8 +220,9 @@ PROGRAM test_pure_vs_oop
   INTEGER(4), ALLOCATABLE, TARGET :: raw_cell_ptr(:), raw_cell_cnt(:)
   INTEGER(8) :: i
 
+  nt = omp_get_max_threads()
   CALL device_env_init(0, 1)
-
+  
   N = 1000000_8; GX = 128; GY = 128; GZ = 128
   OPEN(UNIT=10, FILE='../configs/test_reorder.nml', STATUS='OLD', IOSTAT=ios)
   IF (ios == 0) THEN
@@ -116,14 +232,32 @@ PROGRAM test_pure_vs_oop
   ELSE
      PRINT *, "[Init] Using Default N =", N
   END IF
+
   n_cells = int(GX,8) * int(GY,8) * int(GZ,8)
+  PRINT *, "---------------------------------------"
+  PRINT *, " CONFIG: N =", N, " Grid =", GX, GY, GZ
+  PRINT *, "---------------------------------------"
+
+  ALLOCATE(x(N), y(N), z(N), id(N), ijk(3,N), key(N), key_(N), perm(N), work(N))
+  ALLOCATE(c_ptr(GX,GY,GZ), c_cnt(GX,GY,GZ), c_gen(GX,GY,GZ))
+
+  !$OMP PARALLEL DO
+  DO i = 1, N
+     x(i) = REAL(MOD(i, GX) + 1)
+     y(i) = REAL(MOD(i, GY) + 1)
+     z(i) = REAL(MOD(i, GZ) + 1)
+     ijk(1,i) = INT(x(i)); ijk(2,i) = INT(y(i)); ijk(3,i) = INT(z(i))
+     id(i) = i; perm(i) = i
+  END DO
 
   ! =================================================================
   ! ROUND 1: Device Vector (CUB Sort)
   ! =================================================================
   PRINT *, " "
   PRINT *, ">>> ROUND 1: Device Vector (CUB Sort) <<<"
-  
+
+  CALL device_synchronize()
+
   CALL dv_px%create_buffer(N);    CALL dv_py%create_buffer(N); CALL dv_pz%create_buffer(N)
   CALL dv_tx%create_buffer(N);    CALL dv_ty%create_buffer(N); CALL dv_tz%create_buffer(N)
   CALL dv_codes%create_buffer(N); CALL dv_codes_buf%create_buffer(N)
@@ -142,9 +276,6 @@ PROGRAM test_pure_vs_oop
      ptr_ay(i) = REAL(MOD(i * 31, GY), 4) + 0.5
      ptr_az(i) = REAL(MOD(i * 13, GZ), 4) + 0.5
   END DO
-  CALL device_synchronize()
-
-  CALL SYSTEM_CLOCK(t1, t_rate)
 
   ! (A) Morton
   !$acc parallel loop gang vector_length(WARP_LENGTH) &
