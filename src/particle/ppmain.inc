@@ -1,9 +1,15 @@
 SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
-                                  ni, nj, nk, n_steps)
+               zlev_in, mld_in, props_in, alive_in, &                
+               ni, nj, nk, n_steps, n_props, n_part, &               
+               idx_age, idx_zmin, idx_zmax, idx_uvexp2, idx_uvexp10, & 
+               idx_ml_ages, idx_ml_aged, idx_sfc_ages, idx_sfc_aged)       
+               
     USE Device_Vector
     IMPLICIT NONE
     
     ! --- [Input] 從 Main 傳進來的 CPU 資料 ---
+    INTEGER, INTENT(IN) :: ni, nj, nk, n_steps, n_props, n_part
+
     REAL(4), INTENT(IN) :: host_data(:)
     REAL(4), INTENT(IN) :: disph_in(0:ni+1, 0:nj+1, 0:nk+1)
     REAL(4), INTENT(IN) :: dispv_in(0:ni+1, 0:nj+1, 0:nk+1)
@@ -12,10 +18,9 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
 
     REAL(4), INTENT(IN) :: zlev_in(nk)           
     REAL(4), INTENT(IN) :: mld_in(ni, nj)        
-    REAL(4), INTENT(IN) :: props_in(n_props, N_P) 
-    INTEGER(1), INTENT(IN) :: alive_in(N_P)      
+    REAL(4), INTENT(IN) :: props_in(n_props, n_part) 
+    INTEGER(1), INTENT(IN) :: alive_in(n_part)      
     
-    INTEGER, INTENT(IN) :: ni, nj, nk, n_steps, n_props
     INTEGER, INTENT(IN) :: idx_age, idx_zmin, idx_zmax, idx_uvexp2, idx_uvexp10
     INTEGER, INTENT(IN) :: idx_ml_ages, idx_ml_aged, idx_sfc_ages, idx_sfc_aged
     ! --- Device Vectors (GPU 物件) ---
@@ -29,16 +34,15 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     
     ! 【新增】3. 環境與屬性 Device Vectors
     TYPE(device_vector_r4_t) :: dv_zlev, dv_mld, dv_props
-    TYPE(device_vector_i1_t) :: dv_alive
+    !TYPE(device_vector_i1_t) :: dv_alive
     
     REAL(4), POINTER, CONTIGUOUS :: p_zlev(:), p_mld(:), p_props(:)
-    INTEGER(1), POINTER, CONTIGUOUS :: p_alive(:)
+    INTEGER(4), POINTER, CONTIGUOUS :: p_alive(:)
     
     ! 4. PARTICLE 位置 (已存在)
     TYPE(device_vector_r4_t) :: px, py, pz
     REAL(4), POINTER, CONTIGUOUS :: ax(:), ay(:), az(:)
     
-    ! --- 雜項 ---
     INTEGER(8) :: n, idx_1d, prop_offset
     INTEGER :: i, j, k, ip, jp, kp
     REAL(4) :: xpos, ypos, zpos, xpos_rel, ypos_rel, zpos_rel
@@ -46,15 +50,12 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     REAL(4) :: z_term, val_grid_z, days_inc
 
     ! RK4 TEMP
-    REAL(4) :: xpos, ypos, zpos
-    REAL(4) :: xpos_rel, ypos_rel, zpos_rel
     REAL(4) :: start_x, start_y, start_z
     REAL(4) :: tk1x, tk1y, tk1z, tk2x, tk2y, tk2z
     REAL(4) :: tk3x, tk3y, tk3z, tk4x, tk4y, tk4z
     REAL(4) :: fx, fy, fz, wx, wy, wz, w00, w10, w0, w1
     INTEGER(8) :: ii, jj, kk, off8
 
-    INTEGER :: ip, jp, kp
     INTEGER(1) :: m_curr
     REAL(4) :: d_val, idx_n, idx_p, idy_n, idy_p
     REAL(4) :: val_dz, val_idx_now, val_idx_nxt, val_idx_prv, val_ref
@@ -113,12 +114,12 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     END DO
 
     ! --- (D) 建立粒子 ---
-    CALL px%create_buffer(N_P); CALL px%acc_map(ax)
-    CALL py%create_buffer(N_P); CALL py%acc_map(ay)
-    CALL pz%create_buffer(N_P); CALL pz%acc_map(az)
-    CALL vx%create_buffer(N_P); CALL vx%acc_map(aux)
-    CALL vy%create_buffer(N_P); CALL vy%acc_map(auy)
-    CALL vz%create_buffer(N_P); CALL vz%acc_map(auz)
+    CALL px%create_buffer(n_part); CALL px%acc_map(ax)
+    CALL py%create_buffer(n_part); CALL py%acc_map(ay)
+    CALL pz%create_buffer(n_part); CALL pz%acc_map(az)
+    CALL vx%create_buffer(n_part); CALL vx%acc_map(aux)
+    CALL vy%create_buffer(n_part); CALL vy%acc_map(auy)
+    CALL vz%create_buffer(n_part); CALL vz%acc_map(auz)
 
     ! --- (E) 載入 Zlev (1D) ---
     CALL dv_zlev%create_buffer(nk)
@@ -140,7 +141,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     END DO
 
     ! --- (G) 載入 Properties (2D -> 1D Flattened) ---
-    ! 假設 props 是 (n_props, N_P)
+    ! 假設 props 是 (n_props, n_part)
     CALL dv_props%create_buffer(SIZE(props_in))
     CALL dv_props%acc_map(p_props)
     !$acc parallel loop present(p_props) copyin(props_in)
@@ -150,7 +151,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
 
     ! 3. 初始化粒子
     !$acc parallel loop present(ax, ay, az, aux, auy, auz)
-    DO n = 1, N_P
+    DO n = 1, n_part
         ax(n)=32.5; ay(n)=32.5; az(n)=32.5; aux(n)=1.0; auy(n)=0.0; auz(n)=0.0
     END DO
     CALL device_synchronize() 
@@ -164,185 +165,55 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
         !$acc private(fx, fy, fz, ii, jj, kk, wx, wy, wz, off8, w00, w10, w0, w1) &
         !$acc private(tk1x, tk1y, tk1z, tk2x, tk2y, tk2z) &
         !$acc private(tk3x, tk3y, tk3z, tk4x, tk4y, tk4z)
-        DO n = 1, N_P
+
+        DO n = 1, n_part
+
             IF (p_alive(n) == 0_1) CYCLE
             ! ================= RK4 START =================
             ! 1. 紀錄起點
-            start_x = ax(n); start_y = ay(n); start_z = az(n)
+            start_x = ax(n); 
+            start_y = ay(n); 
+            start_z = az(n)
 
             ! ---------------------------------------------
-            ! Step 1: K1 (at Start)
+            ! Step 1: K1
             ! ---------------------------------------------
-            xpos = start_x; ypos = start_y; zpos = start_z
-            
-            fx=xpos/DX; fy=ypos/DY; fz=zpos/DZ
-            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
-            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
-            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-            
-            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-            off8=kk*GXY+jj*GX+ii+1_8
-            
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk1x=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk1y=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk1z=w0*(1.-wz)+w1*wz
-
+            CALL get_field_deriv(start_x, start_y, start_z, pf1d, &
+                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 tk1x, tk1y, tk1z)
             ! ---------------------------------------------
-            ! Step 2: K2 (at Start + 0.5*dt*K1)
+            ! Step 2: K2
             ! ---------------------------------------------
-            xpos=start_x+0.5*DT*tk1x
-            ypos=start_y+0.5*DT*tk1y
-            zpos=start_z+0.5*DT*tk1z
-            
-            fx=xpos/DX; fy=ypos/DY; fz=zpos/DZ
-            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
-            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
-            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-            
-            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-            off8=kk*GXY+jj*GX+ii+1_8
-            
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk2x=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk2y=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk2z=w0*(1.-wz)+w1*wz
-
+            xpos = start_x + 0.5_4 * DT * tk1x
+            ypos = start_y + 0.5_4 * DT * tk1y
+            zpos = start_z + 0.5_4 * DT * tk1z
+            CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
+                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 tk2x, tk2y, tk2z)
             ! ---------------------------------------------
-            ! Step 3: K3 (at Start + 0.5*dt*K2)
+            ! Step 3: K3
             ! ---------------------------------------------
-            xpos=start_x+0.5*DT*tk2x
-            ypos=start_y+0.5*DT*tk2y
-            zpos=start_z+0.5*DT*tk2z
-            
-            fx=xpos/DX; fy=ypos/DY; fz=zpos/DZ
-            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
-            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
-            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-            
-            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-            off8=kk*GXY+jj*GX+ii+1_8
-            
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk3x=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk3y=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk3z=w0*(1.-wz)+w1*wz
-
+            xpos = start_x + 0.5_4 * DT * tk2x
+            ypos = start_y + 0.5_4 * DT * tk2y
+            zpos = start_z + 0.5_4 * DT * tk2z
+            CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
+                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 tk3x, tk3y, tk3z)
             ! ---------------------------------------------
-            ! Step 4: K4 (at Start + dt*K3)
+            ! Step 4: K4
             ! ---------------------------------------------
-            xpos=start_x+DT*tk3x
-            ypos=start_y+DT*tk3y
-            zpos=start_z+DT*tk3z
-            
-            fx=xpos/DX; fy=ypos/DY; fz=zpos/DZ
-            ii=INT(fx,8); jj=INT(fy,8); kk=INT(fz,8)
-            IF(ii<0)ii=0; IF(ii>GX-2)ii=GX-2
-            IF(jj<0)jj=0; IF(jj>GY-2)jj=GY-2
-            IF(kk<0)kk=0; IF(kk>GZ-2)kk=GZ-2
-            
-            wx=fx-REAL(ii,4); wy=fy-REAL(jj,4); wz=fz-REAL(kk,4)
-            off8=kk*GXY+jj*GX+ii+1_8
-            
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk4x=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk4y=w0*(1.-wz)+w1*wz
-            
-            off8=off8+GXYZ
-            w00=f1d_local(off8)*(1.-wx)+f1d_local(off8+1)*wx
-            w10=f1d_local(off8+GX)*(1.-wx)+f1d_local(off8+GX+1)*wx
-            w0=w00*(1.-wy)+w10*wy
-            w00=f1d_local(off8+GXY)*(1.-wx)+f1d_local(off8+GXY+1)*wx
-            w10=f1d_local(off8+GXY+GX)*(1.-wx)+f1d_local(off8+GXY+GX+1)*wx
-            w1=w00*(1.-wy)+w10*wy
-            tk4z=w0*(1.-wz)+w1*wz
-
+            xpos = start_x + DT * tk3x
+            ypos = start_y + DT * tk3y
+            zpos = start_z + DT * tk3z
+            CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
+                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 tk4x, tk4y, tk4z)
             ! ---------------------------------------------
             ! 更新位置
             ! ---------------------------------------------
-            xpos = start_x + (DT/6.0_4)*(tk1x+2.*tk2x+2.*tk3x+tk4x)
-            ypos = start_y + (DT/6.0_4)*(tk1y+2.*tk2y+2.*tk3y+tk4y)
-            zpos = start_z + (DT/6.0_4)*(tk1z+2.*tk2z+2.*tk3z+tk4z)            ! ================= RK4 END =================
-
+            xpos = start_x + (DT/6.0_4) * (tk1x + 2.0_4*tk2x + 2.0_4*tk3x + tk4x)
+            ypos = start_y + (DT/6.0_4) * (tk1y + 2.0_4*tk2y + 2.0_4*tk3y + tk4y)
+            zpos = start_z + (DT/6.0_4) * (tk1z + 2.0_4*tk2z + 2.0_4*tk3z + tk4z)
             ip = INT(xpos/DX)
             jp = INT(ypos/DY)
             kp = INT(zpos/DZ)
@@ -549,7 +420,96 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
 
 END SUBROUTINE rk4
 
-CONTAINS
-  INCLUDE "cross_ckeck_logic.inc"
-  INCLUDE "rand.inc"
-  INCLUDE "particle_init.inc"
+!$acc routine seq
+SUBROUTINE get_field_deriv(x_in, y_in, z_in, f1d_in, &
+                           dx_val, dy_val, dz_val, &         ! 新增：網格間距
+                           gx_val, gy_val, gz_val, &         ! 新增：網格點數
+                           gxy_val, gxyz_val, &              ! 新增：偏移量
+                           kx, ky, kz)
+    
+    IMPLICIT NONE
+
+    ! --- 輸入 ---
+    REAL(4), INTENT(IN) :: x_in, y_in, z_in
+    REAL(4), INTENT(IN) :: f1d_in(*) 
+    
+    ! --- 新增的網格參數 (全部 INTENT(IN)) ---
+    REAL(4), INTENT(IN) :: dx_val, dy_val, dz_val
+    INTEGER, INTENT(IN) :: gx_val, gy_val, gz_val
+    INTEGER(8), INTENT(IN) :: gxy_val, gxyz_val  ! 這裡要注意原本 GXY 的型別，通常是 INTEGER(8)
+
+    ! --- 輸出 ---
+    REAL(4), INTENT(OUT) :: kx, ky, kz
+
+    ! --- 區域變數 ---
+    REAL(4) :: fx, fy, fz, wx, wy, wz
+    REAL(4) :: w00, w10, w0, w1
+    INTEGER(8) :: ii, jj, kk, off8
+
+    ! 1. 使用傳入的 dx_val, dy_val, dz_val
+    fx = x_in / dx_val
+    fy = y_in / dy_val
+    fz = z_in / dz_val
+
+    ii = INT(fx, 8)
+    jj = INT(fy, 8)
+    kk = INT(fz, 8)
+
+    ! 2. 使用傳入的 gx_val... 進行邊界檢查
+    ! 注意：這裡假設 gx_val 是整數，與 INT(8) 比較時會自動轉型，或建議轉型
+    IF (ii < 0) ii = 0
+    IF (ii > INT(gx_val, 8)-2) ii = INT(gx_val, 8)-2
+    IF (jj < 0) jj = 0
+    IF (jj > INT(gy_val, 8)-2) jj = INT(gy_val, 8)-2
+    IF (kk < 0) kk = 0
+    IF (kk > INT(gz_val, 8)-2) kk = INT(gz_val, 8)-2
+
+    wx = fx - REAL(ii, 4)
+    wy = fy - REAL(jj, 4)
+    wz = fz - REAL(kk, 4)
+
+    ! 3. 使用傳入的 gxy_val 計算偏移
+    ! 注意：這裡要確認 gx_val 也要轉成 INT(8) 參與運算以防溢位
+    off8 = kk * gxy_val + jj * INT(gx_val, 8) + ii + 1_8
+
+    ! 4. 插值 (使用傳入的 gx_val, gxy_val, gxyz_val)
+    ! GX -> INT(gx_val, 8)
+    ! GXY -> gxy_val
+    ! GXYZ -> gxyz_val
+    
+    ! --- U component ---
+    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
+    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    w0  = w00 * (1.-wy) + w10 * wy
+    
+    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
+    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w1  = w00 * (1.-wy) + w10 * wy
+    
+    kx  = w0 * (1.-wz) + w1 * wz
+
+    ! --- V component ---
+    off8 = off8 + gxyz_val
+    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
+    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    w0  = w00 * (1.-wy) + w10 * wy
+    
+    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
+    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w1  = w00 * (1.-wy) + w10 * wy
+    
+    ky  = w0 * (1.-wz) + w1 * wz
+
+    ! --- W component ---
+    off8 = off8 + gxyz_val
+    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
+    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    w0  = w00 * (1.-wy) + w10 * wy
+    
+    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
+    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w1  = w00 * (1.-wy) + w10 * wy
+    
+    kz  = w0 * (1.-wz) + w1 * wz
+
+END SUBROUTINE get_field_deriv

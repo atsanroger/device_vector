@@ -109,6 +109,9 @@ PROGRAM main_driver
 
 CONTAINS
 
-    INCLUDE '../src/particle/ppmain.inc'
-
+  INCLUDE '../src/particle/ppmain.inc'
+  INCLUDE "../src/particle/cross_ckeck_logic.inc"
+  INCLUDE "../src/particle/rand.inc"
+  INCLUDE "../src/particle/particle_init.inc"
+  
 END PROGRAM main_driver

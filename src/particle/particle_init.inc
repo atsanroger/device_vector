@@ -39,8 +39,6 @@ SUBROUTINE pack_grid_masks
     !$acc update device(mask_packed)
 END SUBROUTINE pack_grid_masks
 
-END MODULE particles_acc
-
 SUBROUTINE finalize_pack_grid
     IF (ALLOCATED(mask_packed)) THEN
        
