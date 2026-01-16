@@ -3,6 +3,7 @@
 !/tests/
 !/profile/
 !/src/
+!/configs
 
 !*.cu
 !*.cuh

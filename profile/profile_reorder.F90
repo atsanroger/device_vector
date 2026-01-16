@@ -7,47 +7,31 @@ MODULE pure_openacc_sort_mod
 
 CONTAINS
 
-  ! =========================================================
-  ! 純 OpenACC 手寫 Radix Sort (Binary LSB)
-  ! 原理：
-  !   1. 針對每個 Bit (0~29) 做一次分群。
-  !   2. GPU 算出每個元素的 Bit (0或1)。
-  !   3. CPU 幫忙算前綴和 (Scan) 決定搬家位置 (因為 GPU 純手寫 Scan 太難)。
-  !   4. GPU 根據位置搬家 (Scatter)。
-  ! =========================================================
   SUBROUTINE openacc_radix_sort_i4(n, keys, vals, keys_buf, vals_buf)
     INTEGER(8), VALUE :: n
     INTEGER(4), INTENT(INOUT) :: keys(:), vals(:)
     INTEGER(4), INTENT(INOUT) :: keys_buf(:), vals_buf(:)
     
-    ! 內部暫存
     INTEGER(4), ALLOCATABLE :: bits(:), offsets(:)
     INTEGER(4), ALLOCATABLE :: h_bits(:), h_offsets(:)
     INTEGER :: bit, i, zeros, total_zeros
     
-    ! 分配記憶體
     ALLOCATE(bits(n), offsets(n))
     ALLOCATE(h_bits(n), h_offsets(n))
     
-    ! 上傳到 GPU
     !$acc enter data create(bits, offsets)
 
-    ! Radix Sort: 處理 30 個 bits (Morton Code 範圍)
     DO bit = 0, 29
        
-       ! [GPU] Step 1: 提取當前 Bit (0 或 1)
        !$acc parallel loop present(keys, bits)
        DO i = 1, n
           bits(i) = IAND(ISHFT(keys(i), -bit), 1)
        END DO
        
-       ! [CPU Helper] Step 2: 下載 Bit 資訊並計算 Offset (Scan)
-       ! (這是 Pure OpenACC 最痛的點：手寫 GPU Scan 太難，只好借過 CPU)
        !$acc update host(bits)
        
        h_bits = bits(1:n)
        
-       ! CPU Serial Scan (計算 0 的位置)
        zeros = 0
        DO i = 1, n
           IF (h_bits(i) == 0) THEN
@@ -59,8 +43,6 @@ CONTAINS
        END DO
        total_zeros = zeros
        
-       ! CPU Serial Scan (計算 1 的位置)
-       ! 1 的位置 = 總 0 數 + 當前 1 的序號
        DO i = 1, n
           IF (h_bits(i) == 1) THEN
              zeros = zeros + 1
@@ -68,18 +50,15 @@ CONTAINS
           END IF
        END DO
        
-       ! [GPU] Step 3: 上傳 Offset 並重排 (Scatter)
        offsets(1:n) = h_offsets(1:n)
        !$acc update device(offsets)
        
-       ! 搬家：根據 Offset 把資料搬到 Buffer
        !$acc parallel loop present(keys, vals, keys_buf, vals_buf, bits, offsets)
        DO i = 1, n
           keys_buf(offsets(i)) = keys(i)
           vals_buf(offsets(i)) = vals(i)
        END DO
        
-       ! 寫回原陣列 (Ping-Pong)
        !$acc parallel loop gang vector_length(WARP_LENGTH) &
        !$acc present(keys, vals, keys_buf, vals_buf)
        DO i = 1, n
@@ -89,7 +68,6 @@ CONTAINS
        
     END DO
 
-    ! 清理
     !$acc exit data delete(bits, offsets)
     DEALLOCATE(bits, offsets, h_bits, h_offsets)
     
