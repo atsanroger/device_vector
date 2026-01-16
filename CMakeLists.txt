@@ -16,7 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
 
-set(FORTRAN_GPU_BASE "-acc" "-cuda" "-gpu=cc89" "-Minfo=accel" "-mp")
+set(FORTRAN_GPU_BASE "-v" "-acc" "-cuda" "-gpu=cc89" "-Minfo=accel" "-mp" "-Mnoinline" "-O0")
 
 # ==========================================
 # 3. 核心程式庫 DeviceVector
@@ -38,7 +38,7 @@ add_library(DeviceVector_Mod STATIC
 
 # 核心庫使用 -O2
 target_compile_options(DeviceVector_Mod PUBLIC 
-    $<$<COMPILE_LANGUAGE:Fortran>:${FORTRAN_GPU_BASE};-O2>
+    $<$<COMPILE_LANGUAGE:Fortran>:${FORTRAN_GPU_BASE};>
 )
 target_link_libraries(DeviceVector_Mod PUBLIC DeviceVector_Lib)
 
@@ -49,13 +49,6 @@ target_link_libraries(DeviceVector_Mod PUBLIC DeviceVector_Lib)
 macro(ADD_FORTRAN_GPU_EXE target_name source_file)
     add_executable(${target_name} ${source_file})
     
-    # 判斷是否需要降級優化
-    if("${source_file}" MATCHES "test_rk4_dv.F90" OR "${source_file}" MATCHES "profile_rk4_interp.F90")
-        set(LOCAL_OPT "-O1")
-    else()
-        set(LOCAL_OPT "-O2")
-    endif()
-
     # [修正點] 確保這裡也是獨立參數傳遞
     target_compile_options(${target_name} PRIVATE 
         $<$<COMPILE_LANGUAGE:Fortran>:${FORTRAN_GPU_BASE};${LOCAL_OPT}>

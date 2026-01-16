@@ -69,84 +69,41 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     REAL(4) :: val_k, val_km1, val_kp1, term_bot, term_top
     REAL(4) :: idx0_sq, term_diff, rnd_val
 
-    ! --- (A) 建立與載入流場 (f1d) ---
+    ! --- (A) 流場 (f1d) ---
     sz_field = SIZE(host_data)
     CALL dv_f1d%create_buffer(sz_field)
+    CALL dv_f1d%upload(host_data)  
     CALL dv_f1d%acc_map(pf1d)
-    
-    !$acc parallel loop present(pf1d) copyin(host_data)
-    DO n = 1, sz_field
-       pf1d(n) = host_data(n)
-    END DO
 
-    ! --- (B) 建立與載入擴散係數 (3D -> 1D Flattening) ---
+    ! --- (B) 擴散係數 (利用 Fortran 連續記憶體特性直接上傳) ---
     sz_grid_3d = (ni+2_8) * (nj+2_8) * (nk+2_8)
-    CALL dv_disph%create_buffer(sz_grid_3d); CALL dv_disph%acc_map(p_disph)
-    CALL dv_dispv%create_buffer(sz_grid_3d); CALL dv_dispv%acc_map(p_dispv)
-    CALL dv_dispt%create_buffer(sz_grid_3d); CALL dv_dispt%acc_map(p_dispt)
+    CALL dv_disph%create_buffer(sz_grid_3d)
+    CALL dv_dispv%create_buffer(sz_grid_3d)
+    CALL dv_dispt%create_buffer(sz_grid_3d)
 
-    ! 把 CPU 的 3D 陣列壓扁塞入 GPU
-    !$acc parallel loop collapse(3) present(p_disph, p_dispv, p_dispt) &
-    !$acc& copyin(disph_in, dispv_in, dispt_in)
-    DO k = 0, nk+1
-       DO j = 0, nj+1
-          DO i = 0, ni+1
-             ! 算出 1D 索引 (跟 RK4 裡的 off8 邏輯要一致)
-             idx_1d = k * (nj+2) * (ni+2) + j * (ni+2) + i + 1
-             p_disph(idx_1d) = disph_in(i,j,k)
-             p_dispv(idx_1d) = dispv_in(i,j,k)
-             p_dispt(idx_1d) = dispt_in(i,j,k)
-          END DO
-       END DO
-    END DO
+    ! 直接上傳 3D 陣列，底層等同於連續 1D 拷貝，不需手動跑迴圈
+    CALL dv_disph%upload(disph_in)
+    CALL dv_dispv%upload(dispv_in)
+    CALL dv_dispt%upload(dispt_in)
 
-    ! --- (C) 建立與載入 Mask (2D -> 1D) ---
-    sz_mask_2d = ni * nj
-    CALL dv_rmvmask%create_buffer(sz_mask_2d)
-    CALL dv_rmvmask%acc_map(p_rmvmask)
-
-    !$acc parallel loop collapse(2) present(p_rmvmask) copyin(rmvmask_in)
-    DO j = 1, nj
-       DO i = 1, ni
-          idx_1d = (j-1)*ni + i
-          p_rmvmask(idx_1d) = REAL(rmvmask_in(i,j)) ! 轉成 REAL 存
-       END DO
-    END DO
-
-    ! --- (D) 建立粒子 ---
-    CALL px%create_buffer(n_part); CALL px%acc_map(ax)
-    CALL py%create_buffer(n_part); CALL py%acc_map(ay)
-    CALL pz%create_buffer(n_part); CALL pz%acc_map(az)
-    CALL vx%create_buffer(n_part); CALL vx%acc_map(aux)
-    CALL vy%create_buffer(n_part); CALL vy%acc_map(auy)
-    CALL vz%create_buffer(n_part); CALL vz%acc_map(auz)
+    CALL dv_disph%acc_map(p_disph)
+    CALL dv_dispv%acc_map(p_dispv)
+    CALL dv_dispt%acc_map(p_dispt)
 
     ! --- (E) 載入 Zlev (1D) ---
     CALL dv_zlev%create_buffer(nk)
+    CALL dv_zlev%upload(zlev_in)
     CALL dv_zlev%acc_map(p_zlev)
-    !$acc parallel loop present(p_zlev) copyin(zlev_in)
-    DO k = 1, nk
-       p_zlev(k) = zlev_in(k)
-    END DO
 
-    ! --- (F) 載入 MLD (2D -> 1D) ---
+    ! --- (F) 載入 MLD (2D) ---
     CALL dv_mld%create_buffer(ni * nj)
+    CALL dv_mld%upload(mld_in)
     CALL dv_mld%acc_map(p_mld)
-    !$acc parallel loop collapse(2) present(p_mld) copyin(mld_in)
-    DO j = 1, nj
-       DO i = 1, ni
-          idx_1d = (j-1)*ni + i
-          p_mld(idx_1d) = mld_in(i,j)
-       END DO
-    END DO
 
-    ! --- (G) 載入 Properties (2D -> 1D Flattened) ---
+    ! --- (G) 載入 Properties (2D) ---
     CALL dv_props%create_buffer(SIZE(props_in))
+    CALL dv_props%upload(props_in)
     CALL dv_props%acc_map(p_props)
-    !$acc parallel loop present(p_props) copyin(props_in)
-    DO n = 1, SIZE(props_in)
-       p_props(n) = props_in(n, 1)
-    END DO
 
     ! 3. 初始化粒子
     !$acc parallel loop present(ax, ay, az, aux, auy, auz)
