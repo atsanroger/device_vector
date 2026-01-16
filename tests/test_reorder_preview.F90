@@ -87,12 +87,12 @@ PROGRAM test_reorder_dv_fixed
   !$acc wait
 
   PRINT *, "[Step 2] Sorting..."
-  CALL dv_codes%acc_unmap(); 
-  CALL dv_ids%acc_unmap()
+  !CALL dv_codes%acc_unmap(); 
+  !CALL dv_ids%acc_unmap()
   CALL vec_sort_i4(dv_codes%get_handle(), dv_codes_buf%get_handle(), &
                    dv_ids%get_handle(),   dv_ids_buf%get_handle())
-  CALL dv_codes%acc_map(codes); 
-  CALL dv_ids%acc_map(ids)
+  !CALL dv_codes%acc_map(codes); 
+  !CALL dv_ids%acc_map(ids)
   
   CALL dv_codes%download()
 
