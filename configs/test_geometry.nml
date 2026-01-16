@@ -1,0 +1,31 @@
+&test_config
+  ! --- 網格設定 ---
+  ni = 100
+  nj = 100
+  nk = 50
+  
+  ! --- 物理與時間 ---
+  dx_val = 100.0
+  dy_val = 100.0
+  dz_val = 10.0
+  dt     = 60.0
+  mld_val = 30.0
+  
+  ! --- 模擬控制 ---
+  n_steps = 10
+  n_part  = 1000
+  
+  ! --- 屬性索引 (可以隨便換順序測試) ---
+  idx_age       = 1
+  idx_zmin      = 2
+  idx_zmax      = 3
+  idx_uvexp2    = 4
+  idx_uvexp10   = 5
+  idx_ml_ages   = 6
+  idx_ml_aged   = 7
+  idx_sfc_ages  = 8
+  idx_sfc_aged  = 9
+  n_props       = 10
+/
+
+! test_geometry.nml
