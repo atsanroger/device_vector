@@ -6,8 +6,12 @@
 !/configs
 
 !*.cu
+!*.py
+!*.ipynb
 !*.cuh
 !*.cpp
+!*.hpp
+!*.c
 !*.h
 !*.F90
 !*.f90
