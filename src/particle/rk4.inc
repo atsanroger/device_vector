@@ -1,7 +1,6 @@
 SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
                                   ni, nj, nk, n_steps)
     USE Device_Vector
-    USE geometry        
     USE particles_acc   
     IMPLICIT NONE
     
@@ -351,8 +350,3 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     CALL vx%free(); CALL vy%free(); CALL vz%free()    
 
 END SUBROUTINE rk4
-
-CONTAINS
-  INCLUDE "cross_ckeck_logic.inc"
-  INCLUDE "rand.int"
-  INCLUDE "particle_init.inc"

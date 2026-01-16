@@ -179,7 +179,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ! Step 1: K1
             ! ---------------------------------------------
             CALL get_field_deriv(start_x, start_y, start_z, pf1d, &
-                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 DX, DY, DZ, GX, GY, GZ, &
                                  tk1x, tk1y, tk1z)
             ! ---------------------------------------------
             ! Step 2: K2
@@ -188,7 +188,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ypos = start_y + 0.5_4 * DT * tk1y
             zpos = start_z + 0.5_4 * DT * tk1z
             CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
-                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 DX, DY, DZ, GX, GY, GZ, &
                                  tk2x, tk2y, tk2z)
             ! ---------------------------------------------
             ! Step 3: K3
@@ -197,7 +197,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ypos = start_y + 0.5_4 * DT * tk2y
             zpos = start_z + 0.5_4 * DT * tk2z
             CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
-                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 DX, DY, DZ, GX, GY, GZ, &
                                  tk3x, tk3y, tk3z)
             ! ---------------------------------------------
             ! Step 4: K4
@@ -206,7 +206,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ypos = start_y + DT * tk3y
             zpos = start_z + DT * tk3z
             CALL get_field_deriv(xpos, ypos, zpos, pf1d, &
-                                 DX, DY, DZ, GX, GY, GZ, GXY, GXYZ, &
+                                 DX, DY, DZ, GX, GY, GZ, &
                                  tk4x, tk4y, tk4z)
             ! ---------------------------------------------
             ! 更新位置
@@ -362,7 +362,6 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             IF (p_mld(idx_1d) > -z_term) THEN
                
                IF (idx_ml_ages > 0) THEN
-                  ! 1. 累積秒數
                   p_props(prop_offset + idx_ml_ages) = p_props(prop_offset + idx_ml_ages) + DT
                   
                   IF (idx_ml_aged > 0) THEN
@@ -407,109 +406,102 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     
     CALL px%acc_unmap(); CALL py%acc_unmap(); CALL pz%acc_unmap()
     CALL vx%acc_unmap(); CALL vy%acc_unmap(); CALL vz%acc_unmap()
+
     CALL dv_f1d%free()
-    CALL dv_disph%free(); 
-    CALL dv_dispv%free(); 
+    CALL dv_disph%free() 
+    CALL dv_dispv%free() 
     CALL dv_dispt%free()
     CALL dv_rmvmask%free()
     CALL dv_zlev%free()
     CALL dv_mld%free()
-    CALL dv_props%free()    
-    CALL px%free(); CALL py%free(); CALL pz%free()
-    CALL vx%free(); CALL vy%free(); CALL vz%free()  
+    CALL dv_props%free()  
+
+    CALL px%free() 
+    CALL py%free() 
+    CALL pz%free()
+    CALL vx%free() 
+    CALL vy%free() 
+    CALL vz%free()  
 
 END SUBROUTINE rk4
 
 !$acc routine seq
 SUBROUTINE get_field_deriv(x_in, y_in, z_in, f1d_in, &
-                           dx_val, dy_val, dz_val, &         ! 新增：網格間距
-                           gx_val, gy_val, gz_val, &         ! 新增：網格點數
-                           gxy_val, gxyz_val, &              ! 新增：偏移量
+                           dx_val, dy_val, dz_val, &
+                           gx, gy, gz, &
                            kx, ky, kz)
-    
     IMPLICIT NONE
-
-    ! --- 輸入 ---
+    ! --- Input ---
     REAL(4), INTENT(IN) :: x_in, y_in, z_in
     REAL(4), INTENT(IN) :: f1d_in(*) 
-    
-    ! --- 新增的網格參數 (全部 INTENT(IN)) ---
     REAL(4), INTENT(IN) :: dx_val, dy_val, dz_val
-    INTEGER, INTENT(IN) :: gx_val, gy_val, gz_val
-    INTEGER(8), INTENT(IN) :: gxy_val, gxyz_val  ! 這裡要注意原本 GXY 的型別，通常是 INTEGER(8)
-
-    ! --- 輸出 ---
+    INTEGER, INTENT(IN) :: gx, gy, gz
+    
+    ! --- Output ---
     REAL(4), INTENT(OUT) :: kx, ky, kz
 
-    ! --- 區域變數 ---
+    ! --- Local ---
     REAL(4) :: fx, fy, fz, wx, wy, wz
     REAL(4) :: w00, w10, w0, w1
-    INTEGER(8) :: ii, jj, kk, off8
+    INTEGER :: ii, jj, kk
+    INTEGER :: off, stride_z
 
-    ! 1. 使用傳入的 dx_val, dy_val, dz_val
     fx = x_in / dx_val
     fy = y_in / dy_val
     fz = z_in / dz_val
 
-    ii = INT(fx, 8)
-    jj = INT(fy, 8)
-    kk = INT(fz, 8)
+    ii = INT(fx)
+    jj = INT(fy)
+    kk = INT(fz)
 
-    ! 2. 使用傳入的 gx_val... 進行邊界檢查
-    ! 注意：這裡假設 gx_val 是整數，與 INT(8) 比較時會自動轉型，或建議轉型
     IF (ii < 0) ii = 0
-    IF (ii > INT(gx_val, 8)-2) ii = INT(gx_val, 8)-2
+    IF (ii > gx - 2) ii = gx - 2
     IF (jj < 0) jj = 0
-    IF (jj > INT(gy_val, 8)-2) jj = INT(gy_val, 8)-2
+    IF (jj > gy - 2) jj = gy - 2
     IF (kk < 0) kk = 0
-    IF (kk > INT(gz_val, 8)-2) kk = INT(gz_val, 8)-2
+    IF (kk > gz - 2) kk = gz - 2
 
     wx = fx - REAL(ii, 4)
     wy = fy - REAL(jj, 4)
     wz = fz - REAL(kk, 4)
 
-    ! 3. 使用傳入的 gxy_val 計算偏移
-    ! 注意：這裡要確認 gx_val 也要轉成 INT(8) 參與運算以防溢位
-    off8 = kk * gxy_val + jj * INT(gx_val, 8) + ii + 1_8
-
-    ! 4. 插值 (使用傳入的 gx_val, gxy_val, gxyz_val)
-    ! GX -> INT(gx_val, 8)
-    ! GXY -> gxy_val
-    ! GXYZ -> gxyz_val
+    stride_z = gx * gy
     
-    ! --- U component ---
-    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
-    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    ! off = k * (GX*GY) + j * GX + i + 1
+    off = kk * stride_z + jj * gx + ii + 1
+
+    ! --- U Component ---
+    w00 = f1d_in(off)      * (1.-wx) + f1d_in(off+1)      * wx
+    w10 = f1d_in(off+gx)   * (1.-wx) + f1d_in(off+gx+1)   * wx
     w0  = w00 * (1.-wy) + w10 * wy
     
-    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
-    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w00 = f1d_in(off+stride_z)    * (1.-wx) + f1d_in(off+stride_z+1)    * wx
+    w10 = f1d_in(off+stride_z+gx) * (1.-wx) + f1d_in(off+stride_z+gx+1) * wx
     w1  = w00 * (1.-wy) + w10 * wy
-    
     kx  = w0 * (1.-wz) + w1 * wz
 
-    ! --- V component ---
-    off8 = off8 + gxyz_val
-    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
-    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    ! --- V Component (Offset += GX*GY*GZ) ---
+    off = off + (stride_z * gz)
+
+    w00 = f1d_in(off)      * (1.-wx) + f1d_in(off+1)      * wx
+    w10 = f1d_in(off+gx)   * (1.-wx) + f1d_in(off+gx+1)   * wx
     w0  = w00 * (1.-wy) + w10 * wy
     
-    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
-    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w00 = f1d_in(off+stride_z)    * (1.-wx) + f1d_in(off+stride_z+1)    * wx
+    w10 = f1d_in(off+stride_z+gx) * (1.-wx) + f1d_in(off+stride_z+gx+1) * wx
     w1  = w00 * (1.-wy) + w10 * wy
-    
     ky  = w0 * (1.-wz) + w1 * wz
 
-    ! --- W component ---
-    off8 = off8 + gxyz_val
-    w00 = f1d_in(off8)               * (1.-wx) + f1d_in(off8+1)               * wx
-    w10 = f1d_in(off8+INT(gx_val,8)) * (1.-wx) + f1d_in(off8+INT(gx_val,8)+1) * wx
+    ! --- W Component ---
+    off = off + (stride_z * gz)
+
+    w00 = f1d_in(off)      * (1.-wx) + f1d_in(off+1)      * wx
+    w10 = f1d_in(off+gx)   * (1.-wx) + f1d_in(off+gx+1)   * wx
     w0  = w00 * (1.-wy) + w10 * wy
     
-    w00 = f1d_in(off8+gxy_val)                * (1.-wx) + f1d_in(off8+gxy_val+1)                * wx
-    w10 = f1d_in(off8+gxy_val+INT(gx_val,8))  * (1.-wx) + f1d_in(off8+gxy_val+INT(gx_val,8)+1)  * wx
+    w00 = f1d_in(off+stride_z)    * (1.-wx) + f1d_in(off+stride_z+1)    * wx
+    w10 = f1d_in(off+stride_z+gx) * (1.-wx) + f1d_in(off+stride_z+gx+1) * wx
     w1  = w00 * (1.-wy) + w10 * wy
-    
     kz  = w0 * (1.-wz) + w1 * wz
 
 END SUBROUTINE get_field_deriv
