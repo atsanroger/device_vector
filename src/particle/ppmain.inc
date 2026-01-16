@@ -141,7 +141,6 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     END DO
 
     ! --- (G) 載入 Properties (2D -> 1D Flattened) ---
-    ! 假設 props 是 (n_props, n_part)
     CALL dv_props%create_buffer(SIZE(props_in))
     CALL dv_props%acc_map(p_props)
     !$acc parallel loop present(p_props) copyin(props_in)
@@ -156,7 +155,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
     END DO
     CALL device_synchronize() 
 
-    ! 4. 時間積分主迴圈 (RK4 內嵌)
+    ! 4. RK4 
     !$acc data present(pf1d, ax, ay, az)
     DO i_step = 1, N_S
         
@@ -211,9 +210,26 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ! ---------------------------------------------
             ! 更新位置
             ! ---------------------------------------------
-            xpos = start_x + (DT/6.0_4) * (tk1x + 2.0_4*tk2x + 2.0_4*tk3x + tk4x)
-            ypos = start_y + (DT/6.0_4) * (tk1y + 2.0_4*tk2y + 2.0_4*tk3y + tk4y)
-            zpos = start_z + (DT/6.0_4) * (tk1z + 2.0_4*tk2z + 2.0_4*tk3z + tk4z)
+            !xpos = start_x + (DT/6.0_4) * (tk1x + 2.0_4*tk2x + 2.0_4*tk3x + tk4x)
+            !ypos = start_y + (DT/6.0_4) * (tk1y + 2.0_4*tk2y + 2.0_4*tk3y + tk4y)
+            !zpos = start_z + (DT/6.0_4) * (tk1z + 2.0_4*tk2z + 2.0_4*tk3z + tk4z)
+
+            ax(n) = start_x + (DT/6.0_4) * (tk1x + 2.0_4*tk2x + 2.0_4*tk3x + tk4x)
+            ay(n) = start_y + (DT/6.0_4) * (tk1y + 2.0_4*tk2y + 2.0_4*tk3y + tk4y)
+            az(n) = start_z + (DT/6.0_4) * (tk1z + 2.0_4*tk2z + 2.0_4*tk3z + tk4z)
+        END DO
+
+        !$acc parallel loop gang vector_length(WARP_LENGTH) &
+        !$acc private(xpos, ypos, zpos, ip, jp, kp, xpos_rel, ypos_rel, zpos_rel, m_curr, i_chg, j_chg) &
+        !$acc private(prop_offset, z_term, val_grid_z, days_inc, n_sub, d_val, idx_n, idx_p, idy_n, idy_p)        
+        DO n = 1, n_part
+            IF (p_alive(n) == 0_1) CYCLE
+            
+            ! 從陣列【讀取】剛才算好的暫定位置
+            xpos = ax(n)
+            ypos = ay(n)
+            zpos = az(n)
+
             ip = INT(xpos/DX)
             jp = INT(ypos/DY)
             kp = INT(zpos/DZ)
@@ -226,68 +242,16 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
 
             IF (BTEST(m_curr, 7)) THEN 
                
-               nsplit_local = 5 
-               dtsplit = DT / REAL(nsplit_local, 4)
-               n_sub = 0
-               
-               sz_layer = (ni + 2) * (nj + 2)
-               idx_base = jp * (ni + 2) + ip + 1  ! 基礎平面偏移
-
-               my_seed = IEOR(INT(n, 4), INT(i_step, 4) * 1664525)
-               IF (my_seed == 0) my_seed = 123456789
-
-               DO WHILE (n_sub < nsplit_local)
-                  
-                  idx_k   = kp * sz_layer + idx_base
-                  idx_km1 = (kp-1) * sz_layer + idx_base
-                  idx_kp1 = (kp+1) * sz_layer + idx_base
-                  
-                  val_k   = p_dispt(idx_k)
-                  val_km1 = p_dispt(idx_km1)
-                  val_kp1 = p_dispt(idx_kp1)
-                  
-                  !    Bit 5: -Z (wmask(k-1)), Bit 4: +Z (wmask(k))
-                  term_bot = MERGE(1.0_4, 0.0_4, BTEST(m_curr, 5))
-                  term_top = MERGE(1.0_4, 0.0_4, BTEST(m_curr, 4))
-                  
-                  idx0_sq = idz0(kp)**2
-                  
-                  kt(0) = 0.5_4 * term_bot * (val_k + val_km1) * dtsplit * idx0_sq
-                  kt(1) =         val_k                        * dtsplit * idx0_sq
-                  kt(2) = 0.5_4 * term_top * (val_k + val_kp1) * dtsplit * idx0_sq
-
-                  kt_max = max(kt(0), kt(1), kt(2))
-                  IF (kt_max <= 1.0E-6_4) THEN
-                     m_steps = nsplit_local
-                  ELSE
-                     m_steps = INT(0.01_4 / kt_max)
-                  END IF
-                  m_steps = max(min(m_steps, nsplit_local - n_sub), 1)
-                  
-                  f_step = REAL(m_steps, 4)
-                  kt(0) = kt(0) * f_step
-                  kt(2) = kt(2) * f_step
-                  
-                  rnd_val = nrand(my_seed)  
-
-                  term_diff = sqrt(2.0_4 * max((1.0_4 - zpos_rel)*kt(0) + zpos_rel*kt(2), 0.0_4))
-                  
-                  zpos_rel = zpos_rel + rnd_val * term_diff
-                  zpos_rel = zpos_rel + (kt(2) - kt(0))
-                  
-                  val_dz      = dz(kp)
-                  val_idx_now = idz0(kp)
-                  val_idx_nxt = idz0(kp+1)
-                  val_idx_prv = idz0(kp-1)
-                  val_ref     = dz_ref(ip, jp, kp)
-
-                  CALL cross_z_branchless(kp, zpos_rel, m_curr, val_dz, val_idx_now, &
-                                          val_idx_nxt, val_idx_prv, val_ref, &
-                                          reflc_sfc, reflc_btm, repul_sfc, repul_btm)
-                                          
-                  n_sub = n_sub + m_steps
-                  
-               END DO
+               CALL do_vertical_diffusion( &
+                    INT(n, 8), i_step, ip, jp, kp, &
+                    ni, nj, &
+                    DT, &
+                    m_curr, &
+                    zpos_rel, &          ! INOUT: 更新後的相對位置
+                    p_dispt, &           ! 傳入擴散係數陣列
+                    dz, idz0, dz_ref, &  ! 傳入幾何陣列
+                    reflc_sfc, reflc_btm, repul_sfc, repul_btm, &
+                    n_sub)               ! 丟棄或使用的計數器            
             END IF
 
             ! --- X Check ---
@@ -330,10 +294,18 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
             ay(n) = (REAL(jp, 4) + ypos_rel) * DY
             az(n) = (REAL(kp, 4) + zpos_rel) * DZ
 
+         END DO
+
+         !$acc parallel loop gang vector_length(WARP_LENGTH) &
+         !$acc private(prop_offset, z_term, val_grid_z, days_inc, idx_1d, jp, ip, kp, zpos_rel)
+         DO n = 1, n_part
+
+            IF (p_alive(n) == 0_1) CYCLE
+            kp = INT(az(n)/DZ)
+            zpos_rel = (az(n)/DZ) - REAL(kp, 4)
             prop_offset = (n - 1) * n_props
             z_term = p_zlev(kp) - (1.0_4 - zpos_rel) * dz(kp)
-
-            val_grid_z = REAL(kp, 4) - 1.0_4 + zpos_rel
+            !val_grid_z = REAL(kp, 4) - 1.0_4 + zpos_rel
 
             IF (idx_age > 0) THEN
                 p_props(prop_offset + idx_age) = p_props(prop_offset + idx_age) + DT
@@ -396,7 +368,7 @@ SUBROUTINE rk4(host_data, disph_in, dispv_in, dispt_in, rmvmask_in, &
                    p_props(prop_offset + idx_sfc_aged) = p_props(prop_offset + idx_sfc_aged) + (DT / 86400.0_4)
                END IF
             END IF
-
+         END DO
         END DO ! loop over particle
 
     END DO ! rk4 time loop
@@ -505,3 +477,111 @@ SUBROUTINE get_field_deriv(x_in, y_in, z_in, f1d_in, &
     kz  = w0 * (1.-wz) + w1 * wz
 
 END SUBROUTINE get_field_deriv
+
+!$acc routine seq
+SUBROUTINE do_vertical_diffusion( &
+    n, i_step, ip, jp, kp, &
+    ni, nj, &
+    dt_val, &
+    m_packed_val, &
+    zpos_rel_inout, & 
+    p_dispt, &
+    dz_arr, idz0_arr, dz_ref_arr, &
+    reflc_sfc, reflc_btm, repul_sfc, repul_btm, &
+    steps_taken)
+
+    IMPLICIT NONE
+    
+    ! 輸入宣告
+    INTEGER(8), INTENT(IN) :: n
+    INTEGER, INTENT(IN) :: i_step, ip, jp, kp, ni, nj
+    REAL(4), INTENT(IN) :: dt_val
+    INTEGER(1), INTENT(IN) :: m_packed_val
+    REAL(4), INTENT(INOUT) :: zpos_rel_inout
+    
+    ! 陣列 (注意：在 GPU 上傳入陣列通常宣告為 assumed-size 或 pointer)
+    REAL(4), INTENT(IN) :: p_dispt(*) 
+    REAL(4), INTENT(IN) :: dz_arr(*), idz0_arr(*), dz_ref_arr(ni, nj, *) ! 假設 dz_ref 是 3D
+    
+    REAL(4), INTENT(IN) :: reflc_sfc, reflc_btm, repul_sfc, repul_btm
+    INTEGER, INTENT(OUT) :: steps_taken
+    INTEGER :: iter
+
+    ! 區域變數 (原本主迴圈的那些)
+    INTEGER :: n_sub, m_steps, nsplit_local, my_seed
+    INTEGER(8) :: sz_layer, idx_base, idx_k, idx_km1, idx_kp1
+    REAL(4) :: dtsplit, val_k, val_km1, val_kp1
+    REAL(4) :: term_bot, term_top, idx0_sq, kt(0:2), kt_max, f_step
+    REAL(4) :: rnd_val, term_diff
+    REAL(4) :: val_dz, val_idx_now, val_idx_nxt, val_idx_prv, val_ref
+    
+    nsplit_local = 5 
+    dtsplit = dt_val / REAL(nsplit_local, 4)
+    n_sub = 0
+    
+    ! 計算陣列偏移 (Flattened Index)
+    sz_layer = INT(ni + 2, 8) * INT(nj + 2, 8)
+    idx_base = INT(jp, 8) * INT(ni + 2, 8) + INT(ip, 8) + 1_8 
+
+    ! 初始化隨機亂數種子
+    my_seed = IEOR(INT(n, 4), i_step * 1664525)
+    IF (my_seed == 0) my_seed = 123456789
+
+    !DO WHILE (n_sub < nsplit_local)
+    DO iter = 1, nsplit_local
+      IF (n_sub >= nsplit_local) EXIT
+
+        idx_k   = INT(kp, 8) * sz_layer + idx_base
+        idx_km1 = INT(kp-1, 8) * sz_layer + idx_base
+        idx_kp1 = INT(kp+1, 8) * sz_layer + idx_base
+        
+        val_k   = p_dispt(idx_k)
+        val_km1 = p_dispt(idx_km1)
+        val_kp1 = p_dispt(idx_kp1)
+        
+        term_bot = MERGE(1.0_4, 0.0_4, BTEST(m_packed_val, 5))
+        term_top = MERGE(1.0_4, 0.0_4, BTEST(m_packed_val, 4))
+        
+        idx0_sq = idz0_arr(kp)**2
+        
+        kt(0) = 0.5_4 * term_bot * (val_k + val_km1) * dtsplit * idx0_sq
+        kt(1) =         val_k                        * dtsplit * idx0_sq
+        kt(2) = 0.5_4 * term_top * (val_k + val_kp1) * dtsplit * idx0_sq
+
+        kt_max = max(kt(0), kt(1), kt(2))
+        IF (kt_max <= 1.0E-6_4) THEN
+            m_steps = nsplit_local
+        ELSE
+            m_steps = INT(0.01_4 / kt_max)
+        END IF
+        m_steps = max(min(m_steps, nsplit_local - n_sub), 1)
+        
+        f_step = REAL(m_steps, 4)
+        kt(0) = kt(0) * f_step
+        kt(2) = kt(2) * f_step
+        
+        ! 呼叫亂數產生器 (必須也是 routine seq)
+        rnd_val = nrand(my_seed)  
+
+        term_diff = sqrt(2.0_4 * max((1.0_4 - zpos_rel_inout)*kt(0) + zpos_rel_inout*kt(2), 0.0_4))
+        
+        zpos_rel_inout = zpos_rel_inout + rnd_val * term_diff
+        zpos_rel_inout = zpos_rel_inout + (kt(2) - kt(0))
+        
+        ! 準備呼叫 Cross Z Check
+        val_dz      = dz_arr(kp)
+        val_idx_now = idz0_arr(kp)
+        val_idx_nxt = idz0_arr(kp+1)
+        val_idx_prv = idz0_arr(kp-1)
+        val_ref     = dz_ref_arr(ip, jp, kp)
+
+        ! 呼叫邊界檢查 (這也是 routine seq)
+        CALL cross_z_branchless(kp, zpos_rel_inout, m_packed_val, val_dz, val_idx_now, &
+                                val_idx_nxt, val_idx_prv, val_ref, &
+                                reflc_sfc, reflc_btm, repul_sfc, repul_btm)
+                                
+        n_sub = n_sub + m_steps
+    END DO
+    
+    steps_taken = n_sub ! 只是回傳做個紀錄，非必要
+END SUBROUTINE

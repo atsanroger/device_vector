@@ -4,9 +4,10 @@ PROGRAM main_driver
     IMPLICIT NONE
 
     INTEGER :: ni = 100, nj = 100, nk = 50
+    
     INTEGER :: n_steps = 10, n_props = 10
-    INTEGER :: n_part = 1000 
-    REAL(4) :: dt = 60.0
+    INTEGER :: n_part  = 1000 
+    REAL(4) :: dt      = 60.0
     
     REAL(4) :: dx_val = 100.0, dy_val = 100.0, dz_val = 10.0, mld_val = 30.0
 
@@ -113,5 +114,5 @@ CONTAINS
   INCLUDE "../src/particle/cross_ckeck_logic.inc"
   INCLUDE "../src/particle/rand.inc"
   INCLUDE "../src/particle/particle_init.inc"
-  
+
 END PROGRAM main_driver
