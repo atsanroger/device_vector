@@ -125,6 +125,7 @@ CONTAINS
     USE Device_Vector
     IMPLICIT NONE
     REAL(4), INTENT(IN) :: host_data(:)
+    REAL(4), INTENT(IN) :: check_x(:), check_y(:), check_z(:)
     
     REAL(4), ALLOCATABLE, TARGET :: f1d_local(:)
     
