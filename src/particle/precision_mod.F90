@@ -1,0 +1,10 @@
+MODULE Precision_Mod
+    IMPLICIT NONE
+    
+    INTEGER, PARAMETER :: R4 = SELECTED_REAL_KIND(6)
+    
+    REAL(4), PARAMETER :: 0.0_4 = 0.0_R4
+    REAL(4), PARAMETER :: 1.0_4  = 1.0_R4
+    REAL(4), PARAMETER :: 1.0E-5_4  = 1.0E-5_R4
+    
+END MODULE Precision_Mod

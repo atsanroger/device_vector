@@ -163,7 +163,6 @@ CONTAINS
 
     !$acc data present(f1d_local, ax, ay, az)
     DO i_step = 1, N_S
-       ! ★ 改回你的 WARP_LENGTH
        !$acc parallel loop gang vector_length(WARP_LENGTH) &
        !$acc private(curr_x, curr_y, curr_z, start_x, start_y, start_z) &
        !$acc private(fx, fy, fz, ii, jj, kk, wx, wy, wz, off8, w00, w10, w0, w1) &
