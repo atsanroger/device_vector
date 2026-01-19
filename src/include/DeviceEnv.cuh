@@ -12,16 +12,16 @@ namespace GPU {
         bool initialized = false;
         int device_id    = 0;
         
-        cudaStream_t compute_stream = 0;
+        cudaStream_t compute_stream  = 0;
         cudaStream_t transfer_stream = 0;
 
-        void* workspace_ptr_  = nullptr;
+        void* workspace_ptr_   = nullptr;
         size_t workspace_size_ = 0;      
         
         DeviceEnv() = default;
 
     public:
-        DeviceEnv(const DeviceEnv&) = delete;
+        DeviceEnv(const DeviceEnv&)      = delete;
         void operator=(const DeviceEnv&) = delete;
 
         static DeviceEnv& instance();
@@ -37,7 +37,7 @@ namespace GPU {
             }
             workspace_size_ = 0;
 
-            initialized = false;
+            initialized     = false;
         }
         
         bool is_initialized() const { return initialized; }
@@ -59,7 +59,7 @@ namespace GPU {
 
                 workspace_size_ = static_cast<size_t>(required_bytes * 1.5);
                 if (cudaMallocAsync(&workspace_ptr_, workspace_size_, stream) != cudaSuccess) {
-                    workspace_ptr_ = nullptr;
+                    workspace_ptr_  = nullptr;
                     workspace_size_ = 0;
                     return nullptr;
                 }
