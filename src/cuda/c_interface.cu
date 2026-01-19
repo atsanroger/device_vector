@@ -71,13 +71,18 @@ extern "C" {
     static thread_local void *g_sort_temp_storage = nullptr;
     static thread_local size_t g_sort_temp_storage_bytes = 0;
     static thread_local size_t g_sort_max_items = 0;
+
     void vec_sort_pairs_i4_c(void *k_in, void *k_buf, void *v_in, void *v_buf, size_t n) {
+
         if (n==0) return;
+
         cudaStream_t s = GPU::DeviceEnv::instance().get_compute_stream();
-        int *k_ptr = (int*)((IDeviceVector<int>*)k_in)->device_ptr();
+
+        int *k_ptr     = (int*)((IDeviceVector<int>*)k_in)->device_ptr();
         int *k_buf_ptr = (int*)((IDeviceVector<int>*)k_buf)->device_ptr();
-        int *v_ptr = (int*)((IDeviceVector<int>*)v_in)->device_ptr();
+        int *v_ptr     = (int*)((IDeviceVector<int>*)v_in)->device_ptr();
         int *v_buf_ptr = (int*)((IDeviceVector<int>*)v_buf)->device_ptr();
+
         cub::DoubleBuffer<int> dk(k_ptr, k_buf_ptr), dv(v_ptr, v_buf_ptr);
 
         if (n > g_sort_max_items) {
@@ -92,6 +97,42 @@ extern "C" {
             cudaMemcpyAsync(k_ptr, dk.Current(), n*4, cudaMemcpyDeviceToDevice, s);
             cudaMemcpyAsync(v_ptr, dv.Current(), n*4, cudaMemcpyDeviceToDevice, s);
         }
+    }
+
+    template <typename ValT>
+    void sort_by_key(IDeviceVector<ValT>* values_vec) {
+        if (storage_size_ == 0 || values_vec == nullptr) return;
+        if (values_vec->size() != this->logical_size_) {
+             throw std::runtime_error("SortPairs: Value vector size mismatch");
+        }
+
+        cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
+
+        T* d_keys_alt = nullptr;
+        cudaMallocAsync(&d_keys_alt, storage_size_ * sizeof(T), stream);
+        cub::DoubleBuffer<T> d_keys(d_ptr_, d_keys_alt);
+
+        ValT* d_vals_ptr = values_vec->device_ptr();
+        ValT* d_vals_alt = nullptr;
+        cudaMallocAsync(&d_vals_alt, values_vec->size() * sizeof(ValT), stream);
+        cub::DoubleBuffer<ValT> d_values(d_vals_ptr, d_vals_alt);
+
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortPairs(nullptr, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+        void* d_temp_storage = DeviceEnv::instance().get_workspace(temp_storage_bytes, stream);
+
+        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+        if (d_keys.Current() != d_ptr_) {
+            cudaMemcpyAsync(d_ptr_, d_keys.Current(), logical_size_ * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+        }
+        if (d_values.Current() != d_vals_ptr) {
+            cudaMemcpyAsync(d_vals_ptr, d_values.Current(), logical_size_ * sizeof(ValT), cudaMemcpyDeviceToDevice, stream);
+        }
+
+        cudaFreeAsync(d_keys_alt, stream);
+        cudaFreeAsync(d_vals_alt, stream);
     }
 
     DEFINE_VEC_INTERFACE(r4, float)
