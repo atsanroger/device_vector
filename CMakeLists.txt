@@ -16,8 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
 
-# [修正點] 使用分號分隔 List，確保 CMake 正確拆解參數
-set(FORTRAN_GPU_BASE "-acc" "-cuda" "-gpu=cc89" "-Minfo=accel")
+set(FORTRAN_GPU_BASE "-acc" "-cuda" "-gpu=cc89" "-Minfo=accel" "-mp")
 
 # ==========================================
 # 3. 核心程式庫 DeviceVector
