@@ -7,10 +7,11 @@ MODULE Device_Vector
   PUBLIC :: device_vector_i4_t, device_vector_i8_t
   PUBLIC :: device_vector_r4_t, device_vector_r8_t
   PUBLIC :: device_env_init, device_env_finalize, device_synchronize
-  PUBLIC :: vec_sort_i4
+
+  PUBLIC :: vec_sort_i4, vec_sort_i8, vec_sort_r4, vec_sort_r8
 
   ! ====================================================================
-  ! 1. C FUNCTION INTERFACES (完全展開，絕無省略)
+  ! 1. C FUNCTION INTERFACES 
   ! ====================================================================
   INTERFACE
     SUBROUTINE device_env_init(rank, gpus_per_node) BIND(C, name="device_env_init")
@@ -185,11 +186,44 @@ MODULE Device_Vector
       IMPORT :: c_ptr, c_double; TYPE(c_ptr), VALUE :: h; REAL(c_double) :: res
     END FUNCTION
 
-    SUBROUTINE vec_sort_pairs_i4_c(kin, kbuf, vin, vbuf, n) BIND(C, name="vec_sort_pairs_i4_c")
+    SUBROUTINE vec_sort_pairs_i4_c(k, kb, v, vb, n) BIND(C, name="vec_sort_pairs_i4_c")
       IMPORT :: c_ptr, c_size_t
-      TYPE(C_PTR), VALUE :: kin, kbuf, vin, vbuf; INTEGER(c_size_t), VALUE :: n
+      TYPE(c_ptr), VALUE :: k, kb, v, vb
+      INTEGER(c_size_t), VALUE :: n
     END SUBROUTINE
-  END INTERFACE
+
+    SUBROUTINE vec_sort_pairs_i8_c(k, kb, v, vb, n) BIND(C, name="vec_sort_pairs_i8_c")
+      IMPORT :: c_ptr, c_size_t
+      TYPE(c_ptr), VALUE :: k, kb, v, vb
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_sort_pairs_r4_c(k, kb, v, vb, n) BIND(C, name="vec_sort_pairs_r4_c")
+      IMPORT :: c_ptr, c_size_t
+      TYPE(c_ptr), VALUE :: k, kb, v, vb
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_sort_pairs_r8_c(k, kb, v, vb, n) BIND(C, name="vec_sort_pairs_r8_c")
+      IMPORT :: c_ptr, c_size_t
+      TYPE(c_ptr), VALUE :: k, kb, v, vb
+      INTEGER(c_size_t), VALUE :: n
+    END SUBROUTINE
+
+    SUBROUTINE vec_sort_i4_c(h) BIND(C, name="vec_sort_i4")
+       IMPORT :: c_ptr; TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+    SUBROUTINE vec_sort_i8_c(h) BIND(C, name="vec_sort_i8")
+       IMPORT :: c_ptr; TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+    SUBROUTINE vec_sort_r4_c(h) BIND(C, name="vec_sort_r4")
+       IMPORT :: c_ptr; TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+    SUBROUTINE vec_sort_r8_c(h) BIND(C, name="vec_sort_r8")
+       IMPORT :: c_ptr; TYPE(c_ptr), VALUE :: h
+    END SUBROUTINE
+
+END INTERFACE
 
   ! ====================================================================
   ! 2. TYPE DEFINITIONS (完全展開)
@@ -214,6 +248,8 @@ MODULE Device_Vector
       PROCEDURE :: max           => impl_max_i4
       PROCEDURE :: acc_map       => impl_acc_map_i4
       PROCEDURE :: acc_unmap     => impl_acc_unmap_i4
+      PROCEDURE :: sort          => impl_sort_i4         
+      PROCEDURE :: sort_by_key   => impl_sort_by_key_i4  
   END TYPE
 
   TYPE :: device_vector_i8_t
@@ -235,6 +271,8 @@ MODULE Device_Vector
       PROCEDURE :: max           => impl_max_i8
       PROCEDURE :: acc_map       => impl_acc_map_i8
       PROCEDURE :: acc_unmap     => impl_acc_unmap_i8
+      PROCEDURE :: sort          => impl_sort_i8         
+      PROCEDURE :: sort_by_key   => impl_sort_by_key_i8  
   END TYPE
 
   TYPE :: device_vector_r4_t
@@ -256,6 +294,8 @@ MODULE Device_Vector
       PROCEDURE :: max           => impl_max_r4
       PROCEDURE :: acc_map       => impl_acc_map_r4
       PROCEDURE :: acc_unmap     => impl_acc_unmap_r4
+      PROCEDURE :: sort          => impl_sort_r4         
+      PROCEDURE :: sort_by_key   => impl_sort_by_key_r4  
   END TYPE
 
   TYPE :: device_vector_r8_t
@@ -276,7 +316,9 @@ MODULE Device_Vector
       PROCEDURE :: min           => impl_min_r8
       PROCEDURE :: max           => impl_max_r8
       PROCEDURE :: acc_map       => impl_acc_map_r8
-      PROCEDURE :: acc_unmap     => impl_acc_unmap_r8
+      PROCEDURE :: acc_unmap     => impl_acc_unmap_r8      
+      PROCEDURE :: sort          => impl_sort_r8         
+      PROCEDURE :: sort_by_key   => impl_sort_by_key_r8  
   END TYPE
 
 CONTAINS
@@ -528,11 +570,116 @@ CONTAINS
   ! ====================================================================
   ! 7. ALGORITHMS
   ! ====================================================================
+  ! ====================================================================
+  ! SORT IMPLEMENTATIONS
+  ! ====================================================================
+
+  ! --- Integer 4 ---
+  SUBROUTINE impl_sort_i4(this)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    CALL vec_sort_i4_c(this%handle) 
+  END SUBROUTINE
+
+  SUBROUTINE impl_sort_by_key_i4(this, values)
+    CLASS(device_vector_i4_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(IN) :: values
+    INTEGER(c_size_t) :: n
+    n = impl_size_i4(this)
+    CALL vec_sort_pairs_i4_c(this%handle, C_NULL_PTR, values%handle, C_NULL_PTR, n)
+  END SUBROUTINE
+
+  ! --- Integer 8 ---
+  SUBROUTINE impl_sort_i8(this)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    CALL vec_sort_i8_c(this%handle)
+  END SUBROUTINE
+
+  SUBROUTINE impl_sort_by_key_i8(this, values)
+    CLASS(device_vector_i8_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(IN) :: values
+    INTEGER(c_size_t) :: n
+    n = impl_size_i8(this)
+    CALL vec_sort_pairs_i8_c(this%handle, C_NULL_PTR, values%handle, C_NULL_PTR, n)
+  END SUBROUTINE
+
+  ! --- Real 4 ---
+  SUBROUTINE impl_sort_r4(this)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    CALL vec_sort_r4_c(this%handle)
+  END SUBROUTINE
+
+  SUBROUTINE impl_sort_by_key_r4(this, values)
+    CLASS(device_vector_r4_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(IN) :: values
+    INTEGER(c_size_t) :: n
+    n = impl_size_r4(this)
+    CALL vec_sort_pairs_r4_c(this%handle, C_NULL_PTR, values%handle, C_NULL_PTR, n)
+  END SUBROUTINE
+
+  ! --- Real 8 ---
+  SUBROUTINE impl_sort_r8(this)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    CALL vec_sort_r8_C(this%handle)
+  END SUBROUTINE
+
+  SUBROUTINE impl_sort_by_key_r8(this, values)
+    CLASS(device_vector_r8_t), INTENT(IN) :: this
+    CLASS(device_vector_i4_t), INTENT(IN) :: values
+    INTEGER(c_size_t) :: n
+    n = impl_size_r8(this)
+    CALL vec_sort_pairs_r8_c(this%handle, C_NULL_PTR, values%handle, C_NULL_PTR, n)
+  END SUBROUTINE
+
+  ! =========================================================
+  ! 1. Integer (32-bit)
+  ! =========================================================
   SUBROUTINE vec_sort_i4(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n_opt)
     TYPE(c_ptr), INTENT(IN) :: keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr
-    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt; INTEGER(c_size_t) :: n
-    n = vec_size_i4_c(keys_ptr); IF(PRESENT(n_opt)) n = INT(n_opt, c_size_t)
+    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
+    INTEGER(c_size_t) :: n
+    n = vec_size_i4_c(keys_ptr) 
+    IF(PRESENT(n_opt)) n = INT(n_opt, c_size_t)
     CALL vec_sort_pairs_i4_c(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n)
+  END SUBROUTINE
+
+  ! =========================================================
+  ! 2. Integer (64-bit)
+  ! =========================================================
+  SUBROUTINE vec_sort_i8(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n_opt)
+    TYPE(c_ptr), INTENT(IN) :: keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr
+    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
+    INTEGER(c_size_t) :: n
+    n = vec_size_i8_c(keys_ptr) 
+    IF(PRESENT(n_opt)) n = INT(n_opt, c_size_t)
+    CALL vec_sort_pairs_i8_c(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n)
+  END SUBROUTINE
+
+  ! =========================================================
+  ! 3. Real (32-bit Float)
+  ! =========================================================
+  SUBROUTINE vec_sort_r4(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n_opt)
+    TYPE(c_ptr), INTENT(IN) :: keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr
+    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
+    INTEGER(c_size_t) :: n
+    ! [Fix] Use r4 size function
+    n = vec_size_r4_c(keys_ptr) 
+    IF(PRESENT(n_opt)) n = INT(n_opt, c_size_t)
+    ! [Fix] Call r4 sort function
+    CALL vec_sort_pairs_r4_c(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n)
+  END SUBROUTINE
+
+  ! =========================================================
+  ! 4. Real (64-bit Double)
+  ! =========================================================
+  SUBROUTINE vec_sort_r8(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n_opt)
+    TYPE(c_ptr), INTENT(IN) :: keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr
+    INTEGER(8), INTENT(IN), OPTIONAL :: n_opt
+    INTEGER(c_size_t) :: n
+    ! [Fix] Use r8 size function
+    n = vec_size_r8_c(keys_ptr) 
+    IF(PRESENT(n_opt)) n = INT(n_opt, c_size_t)
+    ! [Fix] Call r8 sort function
+    CALL vec_sort_pairs_r8_c(keys_ptr, keys_buf_ptr, vals_ptr, vals_buf_ptr, n)
   END SUBROUTINE
 
 END MODULE Device_Vector

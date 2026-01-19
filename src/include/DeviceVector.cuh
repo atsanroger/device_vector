@@ -21,7 +21,7 @@
 namespace GPU {
 
     // =========================================================
-    // Allocators (Removed MappedAllocator)
+    // Allocators
     // =========================================================
 
     // Mode 0: Pinned Memory (For fast D2H/H2D)
@@ -36,7 +36,7 @@ namespace GPU {
         void deallocate(T* ptr, std::size_t) { cudaFreeHost(ptr); }
     };
 
-    // Mode 1/2: Pageable Memory (Standard)
+    // Mode 1: Pageable Memory (Standard)
     template <typename T>
     using PageableAllocator = std::allocator<T>;
 
@@ -61,6 +61,10 @@ namespace GPU {
         virtual void set_value(T val)     = 0;
         virtual IDeviceVector<T>* clone() = 0;
 
+        // --- Algorithms ---
+        virtual void sort() = 0;  // [New] Sort Interface
+
+        // --- Reductions ---
         virtual T sum_partial(size_t n) = 0;
         virtual T min_partial(size_t n) = 0;
         virtual T max_partial(size_t n) = 0;
@@ -73,7 +77,7 @@ namespace GPU {
         virtual T* device_ptr() = 0;
 
         virtual size_t size() const         = 0;
-        virtual size_t logical_size() const = 0; // [Fix] Added logical_size interface
+        virtual size_t logical_size() const = 0;
         virtual size_t capacity() const     = 0;
     };
 
@@ -90,7 +94,7 @@ namespace GPU {
         size_t storage_size_ = 0;
         size_t capacity_     = 0;
 
-        bool use_host_mirror_ = true; // [SWITCH] Controls if we maintain CPU std::vector
+        bool use_host_mirror_ = true; 
         int device_id_        = 0;
 
         static size_t align_len(size_t n) {
@@ -173,6 +177,8 @@ namespace GPU {
             else if (op_type == 1) cub::DeviceReduce::Min(nullptr, temp_bytes, d_ptr_, d_out, num_items, stream);
             else cub::DeviceReduce::Max(nullptr, temp_bytes, d_ptr_, d_out, num_items, stream);
 
+            // Using Workspace if implemented for reduce too, otherwise malloc
+            // For now keeping malloc for reduce to match your previous code
             cudaMallocAsync(&d_temp, temp_bytes, stream);
 
             if (op_type == 0) cub::DeviceReduce::Sum(d_temp, temp_bytes, d_ptr_, d_out, num_items, stream);
@@ -189,7 +195,6 @@ namespace GPU {
         }
 
     public:
-        // use_host_mirror: If true, maintains std::vector. If false, acts as Pure Device Vector.
         DeviceVectorImpl(size_t n = 0, bool use_host_mirror = true) 
             : use_host_mirror_(use_host_mirror) {
             
@@ -218,13 +223,11 @@ namespace GPU {
         void resize(size_t new_size) override {
             size_t new_storage_req = align_len(new_size);
 
-            // Optimization: If capacity allows, just update logical size
             if (new_storage_req <= storage_size_) {
                 logical_size_ = new_size;
                 return;
             }
 
-            // [Pure Device Mode]: Skip all Host operations
             if (!use_host_mirror_) {
                 if (new_storage_req > capacity_) {
                     ensure_device_capacity_(new_storage_req);
@@ -234,13 +237,11 @@ namespace GPU {
                 return;
             }
 
-            // [Transfer Mode]: Handle Host Mirror
             unregister_mapping_();
             storage_size_ = new_storage_req;
 
             if (storage_size_ > 0) ensure_device_capacity_(storage_size_);
             
-            // CPU Overhead occurs here
             h_data_.resize(storage_size_); 
 
             logical_size_ = new_size;
@@ -285,13 +286,13 @@ namespace GPU {
         // Data Transfer
         // =========================================================
         void update_device() override {
-            if (!use_host_mirror_) return; // No host data
+            if (!use_host_mirror_) return; 
             if (storage_size_ == 0) return;
             cudaMemcpyAsync(d_ptr_, h_data_.data(), logical_size_ * sizeof(T), cudaMemcpyHostToDevice, DeviceEnv::instance().get_compute_stream());
         }
 
         void update_host() override {
-            if (!use_host_mirror_) return; // No host buffer
+            if (!use_host_mirror_) return; 
             if (storage_size_ == 0) return;
             cudaStream_t s = DeviceEnv::instance().get_compute_stream();
             cudaMemcpyAsync(h_data_.data(), d_ptr_, logical_size_ * sizeof(T), cudaMemcpyDeviceToHost, s);
@@ -331,7 +332,6 @@ namespace GPU {
             int grid = std::min((size_t)(WARP_LENGTH * getNumSMs()), (logical_size_ + block - 1) / block);
             set_value_kernel<T><<<grid, block, 0, s>>>(d_ptr_, val, logical_size_);
             
-            // Padding
             if (logical_size_ < storage_size_) {
                 size_t pad = storage_size_ - logical_size_;
                 int grid2 = std::min((size_t)(WARP_LENGTH * getNumSMs()), (pad + block - 1) / block);
@@ -340,11 +340,9 @@ namespace GPU {
         }
 
         IDeviceVector<T>* clone() override {
-            // [Fix] use this->size() which maps to logical_size_
             auto* new_vec = new DeviceVectorImpl<T, Alloc>(this->size(), use_host_mirror_);
             if (this->size() > 0) {
                 cudaMemcpyAsync(new_vec->device_ptr(), this->d_ptr_, this->size() * sizeof(T), cudaMemcpyDeviceToDevice, DeviceEnv::instance().get_compute_stream());
-                // Also copy host mirror if exists
                 if (use_host_mirror_) {
                     std::copy(this->h_data_.begin(), this->h_data_.begin() + (ptrdiff_t)this->size(), new_vec->host_ptr());
                 }
@@ -353,15 +351,85 @@ namespace GPU {
         }
 
         // =========================================================
+        // Algorithms (Sort)
+        // =========================================================
+        void sort() override {
+            if (storage_size_ == 0) return;
+            
+            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
+
+            // 1. Allocate Double Buffer (Ping-Pong)
+            T* d_alt_ptr = nullptr;
+            if (cudaMallocAsync(&d_alt_ptr, storage_size_ * sizeof(T), stream) != cudaSuccess) {
+                throw std::runtime_error("Sort: Failed to allocate ping-pong buffer");
+            }
+
+            cub::DoubleBuffer<T> d_keys(d_ptr_, d_alt_ptr);
+
+            // 2. Query Workspace
+            size_t temp_storage_bytes = 0;
+            cub::DeviceRadixSort::SortKeys(nullptr, temp_storage_bytes, d_keys, logical_size_, 0, sizeof(T) * 8, stream);
+
+            // 3. Get Workspace from DeviceEnv
+            void* d_temp_storage = DeviceEnv::instance().get_workspace(temp_storage_bytes, stream);
+
+            // 4. Execute Sort
+            cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, logical_size_, 0, sizeof(T) * 8, stream);
+
+            // 5. Handle Ping-Pong result
+            // If the valid data ended up in the temp buffer (d_alt_ptr), copy it back to d_ptr_
+            if (d_keys.Current() != d_ptr_) {
+                cudaMemcpyAsync(d_ptr_, d_keys.Current(), logical_size_ * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+            }
+
+            // Free the ping-pong buffer (workspace is managed by DeviceEnv, so don't free d_temp_storage)
+            cudaFreeAsync(d_alt_ptr, stream);
+        }
+
+        template <typename ValT>
+        void sort_by_key(IDeviceVector<ValT>* values_vec) {
+            if (storage_size_ == 0 || values_vec == nullptr) return;
+            if (values_vec->size() != this->logical_size_) {
+                throw std::runtime_error("Size problem occur for sort_by_key");
+            }
+
+            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
+
+            T* d_keys_alt = nullptr;
+            cudaMallocAsync(&d_keys_alt, storage_size_ * sizeof(T), stream);
+            cub::DoubleBuffer<T> d_keys(d_ptr_, d_keys_alt);
+
+            ValT* d_vals_ptr = values_vec->device_ptr();
+            ValT* d_vals_alt = nullptr;
+            cudaMallocAsync(&d_vals_alt, values_vec->size() * sizeof(ValT), stream);
+            cub::DoubleBuffer<ValT> d_values(d_vals_ptr, d_vals_alt);
+
+            size_t temp_storage_bytes = 0;
+            cub::DeviceRadixSort::SortPairs(nullptr, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+            void* d_temp_storage = DeviceEnv::instance().get_workspace(temp_storage_bytes, stream);
+
+            cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+            if (d_keys.Current() != d_ptr_) {
+                cudaMemcpyAsync(d_ptr_, d_keys.Current(), logical_size_ * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+            }
+            if (d_values.Current() != d_vals_ptr) {
+                cudaMemcpyAsync(d_vals_ptr, d_values.Current(), logical_size_ * sizeof(ValT), cudaMemcpyDeviceToDevice, stream);
+            }
+
+            cudaFreeAsync(d_keys_alt, stream);
+            cudaFreeAsync(d_vals_alt, stream);
+        }
+
+        // =========================================================
         // Getters & Reductions
         // =========================================================
         T* host_ptr() override { return use_host_mirror_ ? h_data_.data() : nullptr; }
         T* device_ptr() override { return d_ptr_; }
         
-        // [Fix] Implement logical_size() as required by Interface
         size_t size() const override { return logical_size_; }
         size_t logical_size() const override { return logical_size_; }
-        
         size_t capacity() const override { return capacity_; }
 
         T sum_partial(size_t n) override { return reduce_impl_(0, n); }
