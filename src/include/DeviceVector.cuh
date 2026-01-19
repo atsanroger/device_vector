@@ -386,6 +386,42 @@ namespace GPU {
             cudaFreeAsync(d_alt_ptr, stream);
         }
 
+        template <typename ValT>
+        void sort_by_key(IDeviceVector<ValT>* values_vec) {
+            if (storage_size_ == 0 || values_vec == nullptr) return;
+            if (values_vec->size() != this->logical_size_) {
+                throw std::runtime_error("Size problem occur for sort_by_key");
+            }
+
+            cudaStream_t stream = DeviceEnv::instance().get_compute_stream();
+
+            T* d_keys_alt = nullptr;
+            cudaMallocAsync(&d_keys_alt, storage_size_ * sizeof(T), stream);
+            cub::DoubleBuffer<T> d_keys(d_ptr_, d_keys_alt);
+
+            ValT* d_vals_ptr = values_vec->device_ptr();
+            ValT* d_vals_alt = nullptr;
+            cudaMallocAsync(&d_vals_alt, values_vec->size() * sizeof(ValT), stream);
+            cub::DoubleBuffer<ValT> d_values(d_vals_ptr, d_vals_alt);
+
+            size_t temp_storage_bytes = 0;
+            cub::DeviceRadixSort::SortPairs(nullptr, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+            void* d_temp_storage = DeviceEnv::instance().get_workspace(temp_storage_bytes, stream);
+
+            cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_keys, d_values, logical_size_, 0, sizeof(T) * 8, stream);
+
+            if (d_keys.Current() != d_ptr_) {
+                cudaMemcpyAsync(d_ptr_, d_keys.Current(), logical_size_ * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+            }
+            if (d_values.Current() != d_vals_ptr) {
+                cudaMemcpyAsync(d_vals_ptr, d_values.Current(), logical_size_ * sizeof(ValT), cudaMemcpyDeviceToDevice, stream);
+            }
+
+            cudaFreeAsync(d_keys_alt, stream);
+            cudaFreeAsync(d_vals_alt, stream);
+        }
+
         // =========================================================
         // Getters & Reductions
         // =========================================================

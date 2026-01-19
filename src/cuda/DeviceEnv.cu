@@ -1,8 +1,10 @@
 #include "DeviceEnv.cuh"
 #include "DevicePtrManager.cuh"
-#include <mutex>
-#include <cuda_runtime.h>
 
+#include <mutex>
+#include <cstdio>
+
+#include <cuda_runtime.h>
 namespace GPU {
 
     // ==========================================
@@ -17,7 +19,10 @@ namespace GPU {
         if (initialized) return;
         
         int device_count;
-        cudaGetDeviceCount(&device_count);
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess) {
+            std::fprintf(stderr, "Error: cudaGetDeviceCount failed.\n");
+            return;
+        }
         
         if (gpus_per_node > 0) {
             device_id = rank % gpus_per_node;
@@ -33,13 +38,6 @@ namespace GPU {
         cudaStreamCreate(&transfer_stream);
         
         initialized = true;
-    }
-
-    void DeviceEnv::finalize() {
-        if (!initialized) return;
-        cudaStreamDestroy(compute_stream);
-        cudaStreamDestroy(transfer_stream);
-        initialized = false;
     }
 
     cudaStream_t DeviceEnv::get_compute_stream() const {
@@ -59,13 +57,22 @@ namespace GPU {
     }
 
     void DevicePtrManager::register_ptr(void* host_ptr, void* device_ptr, size_t size) {
-        std::lock_guard<std::mutex> lock(mu);
+        std::lock_guard<std::mutex> lock(mu); 
         ptr_map[host_ptr] = {device_ptr, size};
     }
 
     void DevicePtrManager::unregister_ptr(void* host_ptr) {
         std::lock_guard<std::mutex> lock(mu);
         ptr_map.erase(host_ptr);
+    }
+    
+    void* DevicePtrManager::get_dev_ptr(void* h_ptr) {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = ptr_map.find(h_ptr);
+        if (it != ptr_map.end()) {
+            return it->second.device_ptr;
+        }
+        return nullptr;
     }
 
 } // namespace GPU

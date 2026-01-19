@@ -14,7 +14,7 @@ namespace GPU {
 
     class DevicePtrManager {
     private:
-        // [修正] 補上這兩個變數
+
         std::unordered_map<void*, PtrInfo> ptr_map;
         std::mutex mu;
         
@@ -28,6 +28,7 @@ namespace GPU {
 
         void register_ptr(void* host_ptr, void* device_ptr, size_t size);
         void unregister_ptr(void* host_ptr);
+        void* get_dev_ptr(void* host_ptr);    
     };
 
 }

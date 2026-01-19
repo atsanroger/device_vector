@@ -619,7 +619,7 @@ CONTAINS
   ! --- Real 8 ---
   SUBROUTINE impl_sort_r8(this)
     CLASS(device_vector_r8_t), INTENT(IN) :: this
-    CALL vec_sort_r8(this%handle)
+    CALL vec_sort_r8_C(this%handle)
   END SUBROUTINE
 
   SUBROUTINE impl_sort_by_key_r8(this, values)

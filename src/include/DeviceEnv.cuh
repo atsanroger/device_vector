@@ -4,6 +4,7 @@
 #pragma once
 #include <cuda_runtime.h>
 #include <algorithm>
+#include <mutex>
 
 namespace GPU {
 
